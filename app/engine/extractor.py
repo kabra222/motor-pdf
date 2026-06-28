@@ -110,10 +110,12 @@ def extract_text(
             scanned_pages.append(pr["page"])
 
     # ── layout analysis on blocks ──────────────────────────────────
+    col_boundaries: list[float] | None = None
     try:
         layout_info = analyze_blocks(all_blocks, num_pages)
-        if layout_info.has_multi_column:
-            pass
+        if layout_info.has_multi_column and layout_info.columns:
+            col_boundaries = [c.x for c in layout_info.columns]
+            all_blocks = _reorder_columns(all_blocks, col_boundaries)
     except Exception:
         pass
 
@@ -389,7 +391,10 @@ def _parallel_extract(
 # ── column detection ─────────────────────────────────────────────
 
 
-def _reorder_columns(blocks: list[dict]) -> list[dict]:
+def _reorder_columns(
+    blocks: list[dict],
+    column_boundaries: list[float] | None = None,
+) -> list[dict]:
     text_blocks = [(i, b) for i, b in enumerate(blocks) if b.get("type") == "text"]
     if len(text_blocks) < 3:
         return blocks
@@ -405,7 +410,6 @@ def _reorder_columns(blocks: list[dict]) -> list[dict]:
         row = [sorted_tb[i]]
         used.add(i)
         b_y0, b_y1 = sorted_tb[i][1]["bbox"][1], sorted_tb[i][1]["bbox"][3]
-        b_h = max(b_y1 - b_y0, 1)
 
         for j in range(i + 1, len(sorted_tb)):
             if j in used:
@@ -427,22 +431,38 @@ def _reorder_columns(blocks: list[dict]) -> list[dict]:
                 if gap > 15:
                     gaps.append(row[k][1]["bbox"][2])
 
-    if not gaps:
+    if not gaps and not column_boundaries:
         return blocks
 
-    gap_x = sorted(gaps)[len(gaps) // 2]
+    if column_boundaries:
+        gap_x = column_boundaries[0]
+    elif gaps:
+        gap_x = sorted(gaps)[len(gaps) // 2]
+    else:
+        return blocks
 
-    left: list[dict] = []
-    right: list[dict] = []
+    cols: list[list[dict]] = [[] for _ in range(len(column_boundaries) + 1)] if column_boundaries else [[], []]
 
     for _, b in text_blocks:
         cx = (b["bbox"][0] + b["bbox"][2]) / 2
-        (left if cx < gap_x else right).append(b)
+        if column_boundaries:
+            placed = False
+            for ci, bx in enumerate(column_boundaries):
+                if cx < bx:
+                    cols[ci].append(b)
+                    placed = True
+                    break
+            if not placed:
+                cols[-1].append(b)
+        else:
+            (cols[0] if cx < gap_x else cols[1]).append(b)
 
-    left.sort(key=lambda b: b["bbox"][1])
-    right.sort(key=lambda b: b["bbox"][1])
+    for col in cols:
+        col.sort(key=lambda b: b["bbox"][1])
 
-    reordered_text = left + right
+    reordered_text = []
+    for col in cols:
+        reordered_text.extend(col)
     non_text = [b for b in blocks if b.get("type") != "text"]
     return reordered_text + non_text
 

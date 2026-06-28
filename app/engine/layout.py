@@ -212,6 +212,58 @@ def _detect_hf_from_text(
     return headers, footers
 
 
+# ── Image-based column detection (optional) ─────────────────
+
+
+def detect_columns_via_projection(
+    path: str | Path, page_num: int = 0, dpi: int = 100
+) -> list[ColumnBoundary]:
+    try:
+        from PIL import Image
+        from pdf2image import convert_from_path
+    except ImportError:
+        return []
+
+    try:
+        images = convert_from_path(
+            str(path), first_page=page_num + 1, last_page=page_num + 1, dpi=dpi
+        )
+        if not images:
+            return []
+        img = images[0]
+
+        import numpy as np
+
+        arr = np.array(img.convert("L"))
+        binary = (arr < 200).astype(np.uint8)
+        proj = binary.sum(axis=0)
+
+        width = img.width
+        threshold = max(1, int(width * 0.01))
+        blank_threshold = proj.max() * 0.02
+
+        bounds: list[ColumnBoundary] = []
+        in_gap = False
+        gap_start = 0
+
+        for x in range(width):
+            if proj[x] < blank_threshold:
+                if not in_gap:
+                    gap_start = x
+                    in_gap = True
+            else:
+                if in_gap:
+                    gap_width = x - gap_start
+                    if gap_width >= threshold and width * 0.1 < (gap_start + gap_width / 2) < width * 0.9:
+                        cx = (gap_start + gap_start + gap_width) / 2
+                        bounds.append(ColumnBoundary(x=cx * dpi / 72, page=page_num))
+                    in_gap = False
+
+        return bounds
+    except Exception:
+        return []
+
+
 # ── Table overlap filtering ────────────────────────────────
 
 
