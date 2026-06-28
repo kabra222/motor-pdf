@@ -142,24 +142,23 @@ def extract_text(
         pass
 
     # ── semantic classification (builtin + Unstructured optional) ──
-    try:
-        if is_unstructured_available():
+    if is_unstructured_available():
+        try:
             classified = classify_pdf(path, strategy="auto")
             if classified:
                 all_blocks = merge_with_blocks(all_blocks, classified)
-        else:
-            all_blocks = classify_blocks_builtin(all_blocks)
-    except Exception:
-        pass
+        except Exception:
+            pass
+    all_blocks = classify_blocks_builtin(all_blocks)
 
     # ── header/footer cleanup ──────────────────────────────────────
     try:
-        if all_blocks and all_blocks[0].get("layout_type") is not None:
-            all_blocks = filter_noise_blocks(all_blocks, classified=None)
-        else:
-            all_blocks = strip_headers_footers_from_blocks(all_blocks, num_pages)
+        all_blocks = filter_noise_blocks(all_blocks, classified=None)
     except Exception:
-        pass
+        try:
+            all_blocks = strip_headers_footers_from_blocks(all_blocks, num_pages)
+        except Exception:
+            pass
 
     # rebuild pages_text from cleaned blocks to keep sync
     try:
