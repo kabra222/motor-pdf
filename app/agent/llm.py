@@ -170,9 +170,13 @@ class OpenRouterProvider(OpenAIProvider):
         self.client = openai.AsyncOpenAI(
             api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
             base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": "https://motor-pdf-production.up.railway.app",
+                "X-Title": "Motor PDF",
+            },
         )
         self.model = model or os.getenv(
-            "OPENROUTER_MODEL", "google/gemini-2.0-flash-exp:free"
+            "OPENROUTER_MODEL", "google/gemma-4-26b-a4b-it:free"
         )
         self.embed_model = os.getenv("OPENROUTER_EMBED_MODEL", "openai/text-embedding-3-small")
 
