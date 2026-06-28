@@ -53,6 +53,7 @@ async def agent_load(
     try:
         result = extract_text(tmp_path, use_ocr=use_ocr)
         result["metadata"]["title"] = Path(file.filename).stem
+        text = result["text"]
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
