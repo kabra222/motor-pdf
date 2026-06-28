@@ -176,7 +176,7 @@ class OpenRouterProvider(OpenAIProvider):
             },
         )
         self.model = model or os.getenv(
-            "OPENROUTER_MODEL", "google/gemma-4-26b-a4b-it:free"
+            "OPENROUTER_MODEL", "nvidia/nemotron-3-nano-30b-a3b:free"
         )
         self.embed_model = os.getenv("OPENROUTER_EMBED_MODEL", "openai/text-embedding-3-small")
 
