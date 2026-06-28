@@ -41,6 +41,8 @@ class TextBlock(BaseModel):
     heading_level: Optional[int] = None
     is_list_item: bool = False
     list_type: Optional[str] = None
+    layout_type: Optional[str] = None
+    is_noise: bool = False
 
 
 class ImageBlock(BaseModel):
@@ -87,6 +89,7 @@ class ExtractionResult(BaseModel):
     num_chunks: int
     scanned_pages: list[int]
     quality: Optional[dict] = None
+    classified_count: int = 0
 
 
 class DocumentJob(BaseModel):
