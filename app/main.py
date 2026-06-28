@@ -1,0 +1,51 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from app.agent.routes import agent_router
+from app.engine.storage import init_db
+from app.routes import router
+
+app = FastAPI(
+    title="Motor PDF",
+    description="Motor de extração de texto de PDFs para LLMs com Agente IA",
+    version="0.4.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+async def startup():
+    await init_db()
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@app.exception_handler(Exception)
+async def generic_error_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500, content={"error": "Erro interno", "detail": str(exc)}
+    )
+
+
+app.include_router(router, prefix="/api/v1")
+app.include_router(agent_router, prefix="/api/v1")
+
+static_dir = Path(__file__).parent / "static"
+if static_dir.exists():
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")

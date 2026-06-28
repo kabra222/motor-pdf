@@ -1,0 +1,28 @@
+services:
+  motor-pdf:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - UVICORN_MAX_FILESIZE=${MAX_FILE_SIZE:-52428800}
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    restart: unless-stopped
+
+  motor-pdf-ocr:
+    build:
+      context: .
+      dockerfile: Dockerfile.ocr
+    ports:
+      - "8001:8000"
+    environment:
+      - USE_OCR=true
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+    restart: unless-stopped
+    profiles:
+      - ocr

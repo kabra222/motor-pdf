@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Motor PDF - Agente IA</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+header { background: #1e293b; border-bottom: 1px solid #334155; padding: 1rem 2rem; display: flex; align-items: center; justify-content: space-between; }
+header h1 { font-size: 1.25rem; color: #38bdf8; }
+header .sub { font-size: .75rem; color: #64748b; }
+.tabs-main { display: flex; gap: 0; border-bottom: 1px solid #334155; padding: 0 2rem; background: #1e293b; }
+.tab-main { padding: .75rem 1.5rem; cursor: pointer; color: #94a3b8; font-size: .875rem; border-bottom: 2px solid transparent; transition: all .15s; }
+.tab-main.active { color: #38bdf8; border-bottom-color: #38bdf8; }
+.tab-main:hover { color: #e2e8f0; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+main { max-width: 960px; margin: 1.5rem auto; padding: 0 1rem; }
+.drop-zone { border: 2px dashed #334155; border-radius: 12px; padding: 2rem; text-align: center; cursor: pointer; transition: all .2s; }
+.drop-zone:hover, .drop-zone.dragover { border-color: #38bdf8; background: #1e293b; }
+.drop-zone.has-file { border-color: #22c55e; background: #052e16; }
+.drop-zone .icon { font-size: 2rem; margin-bottom: .5rem; }
+.drop-zone p { color: #94a3b8; font-size: .875rem; }
+.drop-zone .filename { color: #22c55e; font-weight: 600; margin-top: .25rem; }
+.options { display: flex; gap: 1rem; margin: 1rem 0; flex-wrap: wrap; }
+.options label { display: flex; align-items: center; gap: .5rem; font-size: .8125rem; color: #94a3b8; cursor: pointer; }
+.options input[type=number] { width: 70px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; padding: .25rem .5rem; color: #e2e8f0; font-size: .8125rem; }
+.options input[type=checkbox] { accent-color: #38bdf8; }
+.btn-group { display: flex; gap: .5rem; flex-wrap: wrap; margin: 1rem 0; }
+.btn { background: #38bdf8; color: #0f172a; border: none; border-radius: 8px; padding: .6rem 1.5rem; font-weight: 600; cursor: pointer; font-size: .875rem; transition: opacity .15s; }
+.btn:hover { opacity: .85; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-outline { background: transparent; border: 1px solid #334155; color: #94a3b8; }
+.btn-outline:hover { border-color: #38bdf8; color: #38bdf8; }
+.btn-sm { padding: .35rem .75rem; font-size: .75rem; }
+.status { padding: .75rem 1rem; border-radius: 8px; display: none; font-size: .875rem; margin: .75rem 0; }
+.status.loading { display: block; background: #1e293b; border: 1px solid #334155; }
+.status.error { display: block; background: #450a0a; border: 1px solid #dc2626; color: #fca5a5; }
+.status.done { display: block; background: #052e16; border: 1px solid #22c55e; color: #bbf7d0; }
+.meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: .5rem; margin: 1rem 0; }
+.meta-card { background: #1e293b; border-radius: 8px; padding: .75rem; text-align: center; }
+.meta-card .value { font-size: 1.25rem; font-weight: 700; color: #38bdf8; }
+.meta-card .label { font-size: .6875rem; color: #64748b; margin-top: .25rem; }
+.quality-bar { margin: .75rem 0; padding: .75rem 1rem; background: #1e293b; border-radius: 8px; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.quality-bar .score { font-size: 1.5rem; font-weight: 700; color: #22c55e; }
+.quality-bar .dim { font-size: .6875rem; color: #64748b; }
+.tabs { display: flex; gap: .25rem; margin: 1rem 0 0; }
+.tab { padding: .4rem .75rem; border-radius: 6px 6px 0 0; cursor: pointer; background: #1e293b; color: #64748b; font-size: .75rem; border: 1px solid transparent; }
+.tab.active { background: #334155; color: #e2e8f0; border-color: #38bdf8; }
+.tab-content { display: none; background: #1e293b; border-radius: 0 8px 8px 8px; padding: 1rem; max-height: 400px; overflow-y: auto; font-size: .8125rem; }
+.tab-content.active { display: block; }
+.tab-content pre { white-space: pre-wrap; line-height: 1.5; color: #cbd5e1; font-size: .8125rem; }
+.tab-content .chunk { border-bottom: 1px solid #1e293b; padding: .5rem 0; }
+.tab-content .chunk:last-child { border: none; }
+.tab-content .chunk-meta { font-size: .6875rem; color: #64748b; margin-bottom: .125rem; }
+
+/* Chat */
+.chat-container { background: #1e293b; border-radius: 12px; overflow: hidden; margin-top: 1rem; }
+.chat-messages { max-height: 400px; overflow-y: auto; padding: 1rem; }
+.msg { margin-bottom: 1rem; display: flex; gap: .75rem; }
+.msg-avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: .875rem; flex-shrink: 0; }
+.msg-user .msg-avatar { background: #38bdf8; color: #0f172a; }
+.msg-assistant .msg-avatar { background: #22c55e; color: #052e16; }
+.msg-bubble { background: #0f172a; border-radius: 12px; padding: .75rem 1rem; max-width: 85%; line-height: 1.5; font-size: .875rem; }
+.msg-user .msg-bubble { background: #1e3a5f; }
+.msg-bubble pre { background: #1e293b; padding: .5rem; border-radius: 6px; margin: .5rem 0; overflow-x: auto; font-size: .75rem; }
+.msg-bubble code { background: #1e293b; padding: .1rem .3rem; border-radius: 3px; font-size: .8125rem; }
+.chat-input { display: flex; gap: .5rem; padding: .75rem 1rem; border-top: 1px solid #334155; }
+.chat-input input { flex: 1; background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: .6rem .75rem; color: #e2e8f0; font-size: .875rem; outline: none; }
+.chat-input input:focus { border-color: #38bdf8; }
+.chat-input button { background: #38bdf8; color: #0f172a; border: none; border-radius: 8px; padding: .6rem 1rem; font-weight: 600; cursor: pointer; font-size: .8125rem; }
+.chat-input button:disabled { opacity: .4; cursor: not-allowed; }
+.agent-tools { display: flex; gap: .5rem; flex-wrap: wrap; margin: 1rem 0; }
+.agent-tools button { background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: .4rem .75rem; border-radius: 6px; cursor: pointer; font-size: .75rem; transition: all .15s; }
+.agent-tools button:hover { border-color: #38bdf8; color: #38bdf8; }
+.agent-tools button:disabled { opacity: .3; cursor: not-allowed; }
+.agent-status { font-size: .75rem; color: #64748b; margin-top: .5rem; }
+.citation { color: #38bdf8; font-size: .75rem; cursor: pointer; }
+.typing::after { content: '▊'; animation: blink 1s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+</style>
+</head>
+<body>
+<header>
+<div><h1>Motor PDF</h1><div class="sub">Agente de extração e análise de PDFs com IA</div></div>
+<div class="agent-status" id="agentStatus">⏳ conectar...</div>
+</header>
+
+<div class="tabs-main">
+<div class="tab-main active" data-panel="extract">📄 Extrair</div>
+<div class="tab-main" data-panel="chat">🤖 Chat com IA</div>
+</div>
+
+<main>
+<!-- PANEL: EXTRACT -->
+<div class="tab-panel active" id="panelExtract">
+<div class="drop-zone" id="dropZone">
+<div class="icon">📄</div>
+<p>Arraste um PDF aqui ou clique para selecionar</p>
+<p class="filename" id="fileName"></p>
+</div>
+<input type="file" id="fileInput" accept=".pdf" hidden>
+
+<div class="options">
+<label>Chunk <input type="number" id="chunkSize" value="2000" min="100" max="32000"></label>
+<label>Overlap <input type="number" id="chunkOverlap" value="200" min="0" max="4000"></label>
+<label><input type="checkbox" id="useOCR"> OCR</label>
+</div>
+
+<div class="btn-group">
+<button class="btn" id="extractBtn" disabled>Extrair</button>
+<button class="btn btn-outline" id="loadAgentBtn" disabled>🧠 Carregar no Agente</button>
+</div>
+
+<div class="status" id="status"></div>
+
+<div id="results" style="display:none">
+<div class="meta-grid" id="metaGrid"></div>
+<div class="quality-bar" id="qualityBar"></div>
+
+<div class="tabs">
+<div class="tab active" data-tab="text">Texto</div>
+<div class="tab" data-tab="chunks">Chunks</div>
+<div class="tab" data-tab="blocks">Blocks</div>
+<div class="tab" data-tab="json">JSON</div>
+</div>
+
+<div class="tab-content active" id="tabText"><pre id="textContent"></pre></div>
+<div class="tab-content" id="tabChunks"><div id="chunksContent"></div></div>
+<div class="tab-content" id="tabBlocks"><pre id="blocksContent"></pre></div>
+<div class="tab-content" id="tabJson"><pre id="jsonContent"></pre></div>
+</div>
+</div>
+
+<!-- PANEL: CHAT -->
+<div class="tab-panel" id="panelChat">
+<div class="agent-tools">
+<button id="toolSummarize" disabled>📝 Resumir</button>
+<button id="toolClassify" disabled>🏷️ Classificar</button>
+<button id="toolExtract" disabled>🔍 Extrair Entidades</button>
+</div>
+
+<div class="chat-container">
+<div class="chat-messages" id="chatMessages">
+<div class="msg msg-assistant">
+<div class="msg-avatar">🤖</div>
+<div class="msg-bubble">Carregue um PDF no painel "Extrair" e clique em "Carregar no Agente" para começar a conversar.</div>
+</div>
+</div>
+<div class="chat-input">
+<input type="text" id="chatInput" placeholder="Pergunte sobre o documento..." disabled>
+<button id="chatSend" disabled>Enviar</button>
+</div>
+</div>
+</div>
+</main>
+
+<script>
+// ── Tab switching ──────────────────────────────────────────────
+document.querySelectorAll('.tab-main').forEach(t => {
+t.addEventListener('click', () => {
+document.querySelectorAll('.tab-main').forEach(x => x.classList.remove('active'));
+document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
+t.classList.add('active');
+document.getElementById('panel' + t.dataset.panel.charAt(0).toUpperCase() + t.dataset.panel.slice(1)).classList.add('active');
+});
+});
+
+// ── Extract tabs ──────────────────────────────────────────────
+document.querySelectorAll('#results .tab').forEach(t => {
+t.addEventListener('click', () => {
+document.querySelectorAll('#results .tab').forEach(x => x.classList.remove('active'));
+document.querySelectorAll('#results .tab-content').forEach(x => x.classList.remove('active'));
+t.classList.add('active');
+document.getElementById('tab' + t.dataset.tab.charAt(0).toUpperCase() + t.dataset.tab.slice(1)).classList.add('active');
+});
+});
+
+// ── File handling ─────────────────────────────────────────────
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const fileName = document.getElementById('fileName');
+const extractBtn = document.getElementById('extractBtn');
+const loadAgentBtn = document.getElementById('loadAgentBtn');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+let currentFile = null;
+let lastExtractData = null;
+let chatHistory = [];
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+function handleFile(file) {
+if (!file.name.toLowerCase().endsWith('.pdf')) { setStatus('error', 'Envie um PDF'); return; }
+if (file.size > 50<<20) { setStatus('error', 'Máx 50MB'); return; }
+currentFile = file;
+fileName.textContent = file.name;
+dropZone.classList.add('has-file');
+extractBtn.disabled = false;
+loadAgentBtn.disabled = false;
+setStatus('done', `Pronto: ${file.name}`);
+}
+
+// ── Extract ───────────────────────────────────────────────────
+extractBtn.addEventListener('click', extract);
+loadAgentBtn.addEventListener('click', loadIntoAgent);
+
+async function extract() {
+if (!currentFile) return;
+extractBtn.disabled = true; resultsEl.style.display = 'none';
+const form = new FormData();
+form.append('file', currentFile);
+form.append('chunk_size', document.getElementById('chunkSize').value);
+form.append('chunk_overlap', document.getElementById('chunkOverlap').value);
+form.append('use_ocr', document.getElementById('useOCR').checked ? 'true' : 'false');
+setStatus('loading', 'Extraindo...');
+try {
+const r = await fetch('/api/v1/extract', { method: 'POST', body: form });
+const d = await r.json();
+if (d.error) { setStatus('error', d.error); extractBtn.disabled = false; return; }
+lastExtractData = d;
+setStatus('done', `${d.num_pages} páginas, ${d.num_chunks} chunks`);
+showResults(d);
+} catch(e) { setStatus('error', 'Erro: '+e.message); }
+extractBtn.disabled = false;
+}
+
+async function loadIntoAgent() {
+if (!currentFile) return;
+loadAgentBtn.disabled = true; setStatus('loading', 'Carregando no agente...');
+const form = new FormData();
+form.append('file', currentFile);
+form.append('chunk_size', document.getElementById('chunkSize').value);
+form.append('chunk_overlap', document.getElementById('chunkOverlap').value);
+form.append('use_ocr', document.getElementById('useOCR').checked ? 'true' : 'false');
+try {
+const r = await fetch('/api/v1/agent/load', { method: 'POST', body: form });
+const d = await r.json();
+if (d.error) { setStatus('error', d.error); return; }
+setStatus('done', `Agente pronto: ${d.title} (${d.chunks} chunks)`);
+enableChat(true);
+addChatMessage('assistant', `📄 **${d.title}** carregado (${d.pages} páginas, ${d.chunks} chunks). Faça perguntas sobre o documento.`);
+document.querySelector('[data-panel="chat"]').click();
+} catch(e) { setStatus('error', 'Erro: '+e.message); }
+loadAgentBtn.disabled = false;
+}
+
+function showResults(d) {
+document.getElementById('metaGrid').innerHTML = `
+<div class="meta-card"><div class="value">${d.num_pages}</div><div class="label">Páginas</div></div>
+<div class="meta-card"><div class="value">${d.num_chunks}</div><div class="label">Chunks</div></div>
+<div class="meta-card"><div class="value">${d.headings?.length||0}</div><div class="label">Headings</div></div>
+<div class="meta-card"><div class="value">${d.tables?.length||0}</div><div class="label">Tabelas</div></div>
+<div class="meta-card"><div class="value">${d.scanned_pages?.length||0}</div><div class="label">OCR</div></div>
+<div class="meta-card"><div class="value">${(d.text?.length||0).toLocaleString()}</div><div class="label">Caracteres</div></div>`;
+const q = d.quality;
+if (q) {
+document.getElementById('qualityBar').style.display = 'flex';
+document.getElementById('qualityBar').innerHTML =
+`<div class="score">${(q.overall*100).toFixed(0)}%</div>` +
+Object.entries(q.dimensions||{}).map(([k,v])=>`<span class="dim">${k}: ${(v.score*100).toFixed(0)}%</span>`).join('');
+} else document.getElementById('qualityBar').style.display = 'none';
+document.getElementById('textContent').textContent = d.text||'';
+document.getElementById('chunksContent').innerHTML = (d.chunks||[]).map(c=>
+`<div class="chunk"><div class="chunk-meta">#${c.index} · p.${c.page} · ${c.tokens} tokens · ${c.section||''}</div><pre>${esc(c.text)}</pre></div>`
+).join('');
+document.getElementById('blocksContent').textContent = JSON.stringify(d.blocks,null,2).slice(0,10000);
+document.getElementById('jsonContent').textContent = JSON.stringify(d,null,2).slice(0,20000);
+resultsEl.style.display = 'block';
+}
+
+// ── Chat ──────────────────────────────────────────────────────
+const chatMessages = document.getElementById('chatMessages');
+const chatInput = document.getElementById('chatInput');
+const chatSend = document.getElementById('chatSend');
+
+function enableChat(on) {
+chatInput.disabled = !on;
+chatSend.disabled = !on;
+document.getElementById('toolSummarize').disabled = !on;
+document.getElementById('toolClassify').disabled = !on;
+document.getElementById('toolExtract').disabled = !on;
+}
+
+function addChatMessage(role, content) {
+const div = document.createElement('div');
+div.className = 'msg msg-' + role;
+const avatar = role === 'user' ? '👤' : '🤖';
+div.innerHTML = `<div class="msg-avatar">${avatar}</div><div class="msg-bubble">${content}</div>`;
+chatMessages.appendChild(div);
+chatMessages.scrollTop = chatMessages.scrollHeight;
+return div;
+}
+
+chatSend.addEventListener('click', sendMessage);
+chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+
+async function sendMessage() {
+const text = chatInput.value.trim();
+if (!text) return;
+chatInput.value = '';
+addChatMessage('user', text);
+chatSend.disabled = true; chatInput.disabled = true;
+
+const msgDiv = addChatMessage('assistant', '<span class="typing">Pensando...</span>');
+const bubble = msgDiv.querySelector('.msg-bubble');
+
+try {
+const form = new FormData();
+form.append('message', text);
+form.append('history_json', JSON.stringify(chatHistory.slice(-10)));
+form.append('stream', 'true');
+
+const r = await fetch('/api/v1/agent/chat', { method: 'POST', body: form });
+const reader = r.body.getReader();
+const decoder = new TextDecoder();
+let full = '';
+
+while (true) {
+const { done, value } = await reader.read();
+if (done) break;
+const chunk = decoder.decode(value);
+const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
+for (const line of lines) {
+try {
+const d = JSON.parse(line.slice(6));
+if (d.full) full = d.full;
+if (d.done) break;
+} catch(e) {}
+}
+bubble.innerHTML = marked(full) + '<span class="typing"></span>';
+chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+bubble.innerHTML = marked(full);
+chatHistory.push({ role: 'user', content: text });
+chatHistory.push({ role: 'assistant', content: full });
+} catch(e) {
+bubble.innerHTML = `<span style="color:#fca5a5">Erro: ${e.message}</span>`;
+}
+chatSend.disabled = false; chatInput.disabled = false; chatInput.focus();
+}
+
+// ── Agent tools ───────────────────────────────────────────────
+document.getElementById('toolSummarize').addEventListener('click', async () => {
+const btn = document.getElementById('toolSummarize'); btn.disabled = true;
+addChatMessage('user', '📝 Resuma este documento');
+const msgDiv = addChatMessage('assistant', '<span class="typing">Resumindo...</span>');
+try {
+const r = await fetch('/api/v1/agent/summarize', { method: 'POST', body: new FormData() });
+const d = await r.json();
+msgDiv.querySelector('.msg-bubble').innerHTML = marked(d.summary || d.error);
+} catch(e) { msgDiv.querySelector('.msg-bubble').textContent = 'Erro: '+e.message; }
+btn.disabled = false;
+});
+
+document.getElementById('toolClassify').addEventListener('click', async () => {
+const btn = document.getElementById('toolClassify'); btn.disabled = true;
+addChatMessage('user', '🏷️ Classifique este documento');
+const msgDiv = addChatMessage('assistant', '<span class="typing">Classificando...</span>');
+try {
+const r = await fetch('/api/v1/agent/classify', { method: 'POST' });
+const d = await r.json();
+msgDiv.querySelector('.msg-bubble').innerHTML =
+marked(`**Categoria:** ${d.category}\n**Confiança:** ${(d.confidence*100).toFixed(0)}%\n**Motivo:** ${d.reason}`);
+} catch(e) { msgDiv.querySelector('.msg-bubble').textContent = 'Erro: '+e.message; }
+btn.disabled = false;
+});
+
+document.getElementById('toolExtract').addEventListener('click', async () => {
+const btn = document.getElementById('toolExtract'); btn.disabled = true;
+addChatMessage('user', '🔍 Extraia entidades deste documento');
+const msgDiv = addChatMessage('assistant', '<span class="typing">Extraindo...</span>');
+try {
+const r = await fetch('/api/v1/agent/extract', { method: 'POST', body: new FormData() });
+const d = await r.json();
+msgDiv.querySelector('.msg-bubble').innerHTML = `<pre>${esc(JSON.stringify(d, null, 2))}</pre>`;
+} catch(e) { msgDiv.querySelector('.msg-bubble').textContent = 'Erro: '+e.message; }
+btn.disabled = false;
+});
+
+// ── Agent status ──────────────────────────────────────────────
+async function checkAgent() {
+try {
+const r = await fetch('/api/v1/agent/status');
+const d = await r.json();
+document.getElementById('agentStatus').textContent = `🧠 ${d.provider} · ${d.indexed_chunks} chunks indexados`;
+} catch(e) {
+document.getElementById('agentStatus').textContent = '⚠️ Agente offline (configure LLM)';
+}
+}
+checkAgent();
+
+// ── Helpers ───────────────────────────────────────────────────
+function setStatus(type, msg) {
+statusEl.className = 'status ' + type;
+if (type === 'loading') statusEl.innerHTML = msg + '<div class="progress-bar" style="margin-top:.5rem"><div class="progress-bar-fill" style="width:100%;animation:shimmer 1.5s infinite;height:3px;background:#38bdf8;border-radius:2px"></div></div>';
+else statusEl.textContent = msg;
+statusEl.style.display = 'block';
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function marked(s) {
+if (!s) return '';
+return esc(s)
+.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+.replace(/\*(.*?)\*/g, '<em>$1</em>')
+.replace(/`([^`]+)`/g, '<code>$1</code>')
+.replace(/\n/g, '<br>');
+}
+</script>
+<style>
+@keyframes shimmer { 0%{opacity:1} 50%{opacity:.4} 100%{opacity:1} }
+</style>
+</body>
+</html>
