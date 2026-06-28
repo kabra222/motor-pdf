@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml .
 COPY app/ app/
-RUN pip install --no-cache-dir ".[tables,classifier,openai,anthropic,advanced]"
+RUN pip install --no-cache-dir ".[tables,openai,anthropic,advanced]"
 
 COPY . .
 
