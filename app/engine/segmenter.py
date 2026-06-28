@@ -95,6 +95,43 @@ def _extract_sentence_features(
     return units, feat
 
 
+if HAS_RUPTURES and HAS_POT:
+
+    class WassersteinTopologicalCost(rpt.base.BaseCost):
+        model = "custom_wasserstein_1d"
+        min_size = 3
+
+        def __init__(self):
+            self.signal = None
+            self.n_samples = None
+
+        def fit(self, signal):
+            self.signal = signal
+            self.n_samples = signal.shape[0]
+            return self
+
+        def error(self, start, end):
+            if end - start < self.min_size * 2:
+                return 0.0
+            sub = self.signal[start:end]
+            mid = len(sub) // 2
+            mag_p = np.linalg.norm(sub[:mid], axis=1)
+            mag_q = np.linalg.norm(sub[mid:], axis=1)
+            sp = np.sum(mag_p)
+            sq = np.sum(mag_q)
+            p_dist = mag_p / sp if sp != 0 else mag_p
+            q_dist = mag_q / sq if sq != 0 else mag_q
+            cp = np.arange(len(p_dist), dtype=np.float64)
+            cq = np.arange(len(q_dist), dtype=np.float64)
+            w1 = ot.wasserstein_1d(cp, cq, p_dist, q_dist, p=1)
+            return float(w1 * (end - start))
+
+else:
+
+    class WassersteinTopologicalCost:
+        pass
+
+
 def segment_bcpd(
     text: str,
     blocks: list[dict] | None = None,
@@ -112,7 +149,11 @@ def segment_bcpd(
     if n < 5:
         return SegmentationResult(segments=[], method="bcpd_too_short")
 
-    algo = rpt.Pelt(model="l2", min_size=5, jump=1).fit(feat)
+    if HAS_POT:
+        custom = WassersteinTopologicalCost()
+        algo = rpt.Pelt(custom_cost=custom, min_size=5, jump=1).fit(feat)
+    else:
+        algo = rpt.Pelt(model="l2", min_size=5, jump=1).fit(feat)
     pen = penalty or n * 0.02
     bkps = algo.predict(pen=pen)
     n_bkps = len(bkps)
@@ -164,7 +205,7 @@ def segment_bcpd(
         )
         char_pos += seg_len
 
-    return SegmentationResult(segments=segments, method="bcpd_pelt")
+    return SegmentationResult(segments=segments, method="bcpd_pelt_wasserstein" if HAS_POT else "bcpd_pelt")
 
 
 def segment_headings(
@@ -232,11 +273,13 @@ def segment_hybrid(
 ) -> SegmentationResult:
     heading_result = segment_headings(text, blocks)
     if heading_result.segments:
+        heading_result.segments = apply_guardrail(heading_result.segments, text)
         return heading_result
 
     if HAS_RUPTURES:
         bcpd_result = segment_bcpd(text, blocks)
         if bcpd_result.segments:
+            bcpd_result.segments = apply_guardrail(bcpd_result.segments, text)
             return bcpd_result
 
     return SegmentationResult(segments=[], method="none")
@@ -282,7 +325,73 @@ def _infer_heading(seg_text: str) -> Optional[str]:
     return None
 
 
+_SENTENCE_END = re.compile(r"[.!?][\"']?\s*$")
+
+_ANAPHORA_PATTERNS = re.compile(
+    r"^\s*(O|A|Os|As|Este|Esta|Estes|Estas|Esse|Essa|Esses|Essas|"
+    r"Aquele|Aquela|Aqueles|Aquelas|Seu|Sua|Seus|Suas|Lhe|Lhes|"
+    r"O referido|A referida|O mencionado|A mencionada|O citado|A citada|"
+    r"Tal|Tais|Mesmo|Mesma|Mesmos|Mesmas|"
+    r"O presente|A presente|O sobredito|A sobredita)\b",
+    re.IGNORECASE,
+)
+
+_SHORT_CONJUNCTIONS = re.compile(
+    r"^\s*(e|mas|porém|contudo|todavia|entretanto|no entanto|"
+    r"pois|portanto|logo|assim|desse modo|"
+    r"que|o qual|a qual|os quais|as quais|"
+    r"como|conforme|segundo|"
+    r"além disso|ademais|outrossim)\b",
+    re.IGNORECASE,
+)
+
+_MIN_GUARDRAIL_TOKENS = 30
+
+
+def _count_tokens_simple(text: str) -> int:
+    return len(text.split())
+
+
+def _check_orphan_start(segments: list[Segment], idx: int) -> bool:
+    if idx <= 0 or idx >= len(segments):
+        return False
+    cur = segments[idx].text.lstrip()
+    prev = segments[idx - 1].text
+    if _ANAPHORA_PATTERNS.match(cur) and _SENTENCE_END.search(prev) is None:
+        return True
+    if _SHORT_CONJUNCTIONS.match(cur) and _SENTENCE_END.search(prev) is None:
+        return True
+    return False
+
+
 def apply_guardrail(
     segments: list[Segment], text: str
 ) -> list[Segment]:
-    return segments
+    if not segments:
+        return segments
+    merged = []
+    for seg in segments:
+        if not merged:
+            merged.append(seg)
+            continue
+        prev = merged[-1]
+        cur_tok = _count_tokens_simple(seg.text)
+        prev_tok = _count_tokens_simple(prev.text)
+        if _check_orphan_start(merged, len(merged)):
+            prev.text = prev.text.rstrip() + "\n" + seg.text
+            prev.end_char = seg.end_char
+            if seg.depth > prev.depth:
+                prev.depth = seg.depth
+            if seg.heading and not prev.heading:
+                prev.heading = seg.heading
+            continue
+        if cur_tok < _MIN_GUARDRAIL_TOKENS and prev_tok > _MIN_GUARDRAIL_TOKENS * 3:
+            prev.text = prev.text.rstrip() + "\n" + seg.text
+            prev.end_char = seg.end_char
+            if seg.depth > prev.depth:
+                prev.depth = seg.depth
+            if seg.heading and not prev.heading:
+                prev.heading = seg.heading
+            continue
+        merged.append(seg)
+    return merged
