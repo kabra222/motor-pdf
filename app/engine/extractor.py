@@ -325,7 +325,8 @@ def _parallel_extract(
     progress: Callable | None,
 ) -> list[dict]:
     results: dict[int, dict] = {}
-    with ThreadPoolExecutor(max_workers=min(6, num_pages)) as pool:
+    workers = max(2, min(4, num_pages // 20))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(_process_single_page, doc, pn, body_size, use_ocr, ocr_engine): pn
             for pn in range(num_pages)
