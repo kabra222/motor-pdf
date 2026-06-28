@@ -2,15 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir PyMuPDF pdfplumber fastapi uvicorn pydantic python-multipart tiktoken pypdf
-
-COPY pyproject.toml .
 COPY app/ app/
+COPY pyproject.toml .
 
-RUN pip install --no-cache-dir ".[openai,anthropic,advanced]"
-
-# invalidate-cache: 2026-06-28-v3
-COPY . .
+RUN pip install --no-cache-dir PyMuPDF pdfplumber fastapi uvicorn pydantic python-multipart tiktoken pypdf ".[openai,anthropic,advanced]"
 
 EXPOSE 8000
 
