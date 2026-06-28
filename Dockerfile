@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY pyproject.toml .
 COPY app/ app/
-RUN pip install --no-cache-dir ".[openai,anthropic]"
+RUN pip install --no-cache-dir ".[openai,anthropic,advanced]"
 
 COPY . .
 

@@ -106,6 +106,7 @@ main { max-width: 960px; margin: 1.5rem auto; padding: 0 1rem; }
 <label>Chunk <input type="number" id="chunkSize" value="2000" min="100" max="32000"></label>
 <label>Overlap <input type="number" id="chunkOverlap" value="200" min="0" max="4000"></label>
 <label><input type="checkbox" id="useOCR"> OCR</label>
+<label><input type="checkbox" id="useBCPD"> BCPD (segmentação avançada)</label>
 </div>
 
 <div class="btn-group">
@@ -218,6 +219,7 @@ form.append('file', currentFile);
 form.append('chunk_size', document.getElementById('chunkSize').value);
 form.append('chunk_overlap', document.getElementById('chunkOverlap').value);
 form.append('use_ocr', document.getElementById('useOCR').checked ? 'true' : 'false');
+form.append('use_bcpd', document.getElementById('useBCPD').checked ? 'true' : 'false');
 setStatus('loading', 'Extraindo...');
 try {
 const r = await fetch('/api/v1/extract', { method: 'POST', body: form });
@@ -238,6 +240,7 @@ form.append('file', currentFile);
 form.append('chunk_size', document.getElementById('chunkSize').value);
 form.append('chunk_overlap', document.getElementById('chunkOverlap').value);
 form.append('use_ocr', document.getElementById('useOCR').checked ? 'true' : 'false');
+form.append('use_bcpd', document.getElementById('useBCPD').checked ? 'true' : 'false');
 try {
 const r = await fetch('/api/v1/agent/load', { method: 'POST', body: form });
 const d = await r.json();

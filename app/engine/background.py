@@ -51,6 +51,7 @@ async def start_processing(
     password: str | None,
     model: str,
     extract_images: bool,
+    use_bcpd: bool = False,
 ) -> None:
     loop = asyncio.get_running_loop()
 
@@ -101,6 +102,7 @@ async def start_processing(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             model=model,
+            use_bcpd=use_bcpd,
         )
     except Exception as e:
         await _publish(job_id, "error", {"error": f"Chunking failed: {e}"})

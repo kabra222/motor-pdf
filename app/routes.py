@@ -83,6 +83,7 @@ async def extract(
     format: FormatType = Form(FormatType.text),
     model: str = Form("gpt-4"),
     extract_images: bool = Form(False),
+    use_bcpd: bool = Form(False),
     x_api_key: str = Depends(verify_api_key),
 ):
     _check_rate(x_api_key or "anonymous")
@@ -94,6 +95,7 @@ async def extract(
         "use_ocr": use_ocr,
         "model": model,
         "extract_images": extract_images,
+        "use_bcpd": use_bcpd,
     }
     cache_key = cache.make_key(data, cache_params)
     cached = await cache.get(cache_key)
@@ -129,6 +131,7 @@ async def extract(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         model=model,
+        use_bcpd=use_bcpd,
     )
 
     extraction = ExtractionResult(
@@ -183,6 +186,7 @@ async def create_document(
     password: str | None = Form(None),
     model: str = Form("gpt-4"),
     extract_images: bool = Form(False),
+    use_bcpd: bool = Form(False),
     x_api_key: str = Depends(verify_api_key),
 ):
     _check_rate(x_api_key or "anonymous")
@@ -205,6 +209,7 @@ async def create_document(
             password,
             model,
             extract_images,
+            use_bcpd,
         )
     )
 

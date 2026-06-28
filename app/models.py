@@ -25,6 +25,7 @@ class Chunk(BaseModel):
     section: Optional[str] = None
     heading: Optional[str] = None
     tokens: int = 0
+    depth: int = 0
     start_char: int = 0
     end_char: int = 0
 
@@ -114,6 +115,7 @@ class ExtractRequest(BaseModel):
     format: FormatType = FormatType.text
     model: str = "gpt-4"
     extract_images: bool = False
+    use_bcpd: bool = False
 
     model_config = {"use_enum_values": True}
 

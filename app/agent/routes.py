@@ -38,6 +38,7 @@ async def agent_load(
     file: UploadFile = File(...),
     chunk_size: int = Form(default=2000),
     chunk_overlap: int = Form(default=200),
+    use_bcpd: bool = Form(False),
     use_ocr: bool = Form(False),
 ):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -56,11 +57,12 @@ async def agent_load(
         Path(tmp_path).unlink(missing_ok=True)
 
     chunks = chunk_text(
-        result["text"],
+        text,
         pages_text=result.get("pages_text"),
         blocks=result.get("blocks"),
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
+        use_bcpd=use_bcpd,
     )
 
     agent = await get_agent()

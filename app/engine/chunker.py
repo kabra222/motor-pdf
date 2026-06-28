@@ -10,6 +10,12 @@ try:
 except ImportError:
     HAS_TIKTOKEN = False
 
+try:
+    from app.engine.segmenter import segment_hybrid, SegmentationResult, Segment
+    HAS_SEGMENTER = True
+except ImportError:
+    HAS_SEGMENTER = False
+
 
 def _count_tokens(text: str, model: str = "gpt-4") -> int:
     if HAS_TIKTOKEN:
@@ -39,10 +45,58 @@ def chunk_text(
     chunk_size: int = 2000,
     chunk_overlap: int = 200,
     model: str = "gpt-4",
+    use_bcpd: bool = False,
 ) -> list[Chunk]:
+    if use_bcpd and HAS_SEGMENTER and blocks:
+        seg_result = segment_hybrid(text, blocks, chunk_size)
+        if seg_result.segments:
+            return _segments_to_chunks(seg_result.segments, chunk_size, chunk_overlap, model)
     if blocks:
         return _semantic_chunk(blocks, chunk_size, chunk_overlap, model)
     return _fallback_chunk(text, pages_text or [text], chunk_size, chunk_overlap, model)
+
+
+def _segments_to_chunks(
+    segments: list[Segment],
+    chunk_size: int,
+    chunk_overlap: int,
+    model: str,
+) -> list[Chunk]:
+    raw: list[dict] = []
+    for seg in segments:
+        text = seg.text.strip()
+        if not text:
+            continue
+        tokens = _count_tokens(text, model)
+        if tokens <= chunk_size:
+            raw.append({
+                "text": text,
+                "page": seg.page,
+                "heading": seg.heading,
+                "section": seg.heading,
+                "depth": seg.depth,
+                "tokens": tokens,
+            })
+        else:
+            sub = _split_by_tokens(text, seg, chunk_size, chunk_overlap, model)
+            raw.extend(sub)
+
+    result: list[Chunk] = []
+    char_pos = 0
+    for i, c in enumerate(raw):
+        result.append(Chunk(
+            index=i,
+            text=c["text"],
+            page=c["page"],
+            section=c.get("section"),
+            heading=c.get("heading"),
+            tokens=c.get("tokens", 0),
+            depth=c.get("depth", 0),
+            start_char=char_pos,
+            end_char=char_pos + len(c["text"]),
+        ))
+        char_pos += len(c["text"])
+    return result
 
 
 def _semantic_chunk(
@@ -102,6 +156,7 @@ def _semantic_chunk(
                 "page": page,
                 "heading": section["heading"],
                 "section": section["heading"],
+                "depth": section["level"],
                 "tokens": tokens,
             })
         else:
@@ -120,12 +175,56 @@ def _semantic_chunk(
             section=c.get("section"),
             heading=c.get("heading"),
             tokens=c.get("tokens", 0),
+            depth=c.get("depth", 0),
             start_char=char_pos,
             end_char=char_pos + len(c["text"]),
         ))
         char_pos += len(c["text"])
 
     return result
+
+
+def _split_by_tokens(
+    text: str,
+    seg: Segment,
+    chunk_size: int,
+    chunk_overlap: int,
+    model: str,
+) -> list[dict]:
+    paragraphs = text.split("\n\n")
+    chunks: list[dict] = []
+    buffer = ""
+    for para in paragraphs:
+        para_tokens = _count_tokens(para, model)
+        buffer_tokens = _count_tokens(buffer, model)
+        if not buffer:
+            buffer = para
+        elif buffer_tokens + para_tokens <= chunk_size:
+            buffer += "\n\n" + para
+        else:
+            chunks.append({
+                "text": buffer.strip(),
+                "page": seg.page,
+                "heading": seg.heading,
+                "section": seg.heading,
+                "depth": seg.depth,
+                "tokens": buffer_tokens,
+            })
+            if chunk_overlap > 0 and buffer:
+                overlap = _get_tail(buffer, chunk_overlap, model)
+                buffer = (overlap + "\n\n" + para).strip()
+            else:
+                buffer = para
+    if buffer.strip():
+        chunks.append({
+            "text": buffer.strip(),
+            "page": seg.page,
+            "heading": seg.heading,
+            "section": seg.heading,
+            "depth": seg.depth,
+            "tokens": _count_tokens(buffer, model),
+        })
+    return chunks
 
 
 def _split_section(
@@ -154,6 +253,7 @@ def _split_section(
                 "page": page,
                 "heading": section["heading"],
                 "section": section["heading"],
+                "depth": section["level"],
                 "tokens": buffer_tokens,
             })
             if chunk_overlap > 0 and buffer:
@@ -168,6 +268,7 @@ def _split_section(
             "page": page,
             "heading": section["heading"],
             "section": section["heading"],
+            "depth": section["level"],
             "tokens": _count_tokens(buffer, model),
         })
 
