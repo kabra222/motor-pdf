@@ -159,6 +159,35 @@ class OllamaProvider(LLMProvider):
         await self._httpx.aclose()
 
 
+class OpenRouterProvider(OpenAIProvider):
+    def __init__(
+        self,
+        model: str | None = None,
+        api_key: str | None = None,
+    ):
+        import openai
+
+        self.client = openai.AsyncOpenAI(
+            api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
+            base_url="https://openrouter.ai/api/v1",
+        )
+        self.model = model or os.getenv(
+            "OPENROUTER_MODEL", "google/gemini-2.0-flash-exp:free"
+        )
+        self.embed_model = os.getenv("OPENROUTER_EMBED_MODEL", "openai/text-embedding-3-small")
+
+    async def embed(self, text: str) -> list[float]:
+        import openai
+
+        try:
+            resp = await self.client.embeddings.create(
+                model=self.embed_model, input=text
+            )
+            return resp.data[0].embedding
+        except Exception:
+            return [0.0] * 256
+
+
 def create_provider(
     provider: str = "openai", **kwargs
 ) -> LLMProvider:
@@ -169,5 +198,7 @@ def create_provider(
             return AnthropicProvider(**kwargs)
         case "ollama":
             return OllamaProvider(**kwargs)
+        case "openrouter":
+            return OpenRouterProvider(**kwargs)
         case _:
             raise ValueError(f"Provider desconhecido: {provider}")
