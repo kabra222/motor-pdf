@@ -89,6 +89,10 @@ async def extract(
     _check_rate(x_api_key or "anonymous")
     data, filename = await _validate_file(file)
 
+    ocr_val: bool | str = False
+    if use_ocr and use_ocr.lower() not in ("", "false", "0"):
+        ocr_val = use_ocr if use_ocr.lower() in ("easyocr", "paddleocr") else True
+
     cache_params = {
         "chunk_size": chunk_size,
         "chunk_overlap": chunk_overlap,
@@ -106,10 +110,6 @@ async def extract(
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(data)
         tmp_path = tmp.name
-
-    ocr_val: bool | str = False
-    if use_ocr and use_ocr.lower() not in ("", "false", "0"):
-        ocr_val = use_ocr if use_ocr.lower() in ("easyocr", "paddleocr") else True
 
     try:
         result = extract_text(
