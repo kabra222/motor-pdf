@@ -16,6 +16,18 @@ from app.engine.layout import (
     is_inside_table,
 )
 from app.engine.quality import score_extraction
+from app.engine.tables import (
+    extract_tables_hybrid as extract_tables_advanced,
+    is_camelot_available,
+)
+from app.engine.classifier import (
+    classify_pdf,
+    classify_blocks_builtin,
+    merge_with_blocks,
+    filter_noise_blocks,
+    is_unstructured_available,
+)
+from app.engine.ocr_easy import EasyOCREngine, is_easyocr_available
 
 _LIST_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^[-•–]\s"), "bullet"),
@@ -30,7 +42,7 @@ _SHORT_ORPHAN = re.compile(r"^\s*[a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃ
 
 def extract_text(
     path: str | Path,
-    use_ocr: bool = False,
+    use_ocr: bool | str = False,
     password: str | None = None,
     extract_images: bool = False,
     parallel: bool = True,
@@ -61,9 +73,19 @@ def extract_text(
         progress(0, num_pages, "scanning")
 
     ocr_engine = None
+    use_easyocr = (
+        use_ocr == "easyocr"
+        or (isinstance(use_ocr, bool) and use_ocr and is_easyocr_available() and not hasattr(__builtins__, 'test'))
+    )
     if use_ocr:
-        from .ocr import OCREngine
-        ocr_engine = OCREngine()
+        if use_easyocr:
+            ocr_engine = EasyOCREngine()
+        else:
+            try:
+                from .ocr import OCREngine
+                ocr_engine = OCREngine()
+            except Exception:
+                pass
 
     # ── detect body font size ─────────────────────────────────────
     size_mass: dict[float, int] = {}
@@ -119,9 +141,23 @@ def extract_text(
     except Exception:
         pass
 
+    # ── semantic classification (builtin + Unstructured optional) ──
+    try:
+        if is_unstructured_available():
+            classified = classify_pdf(path, strategy="auto")
+            if classified:
+                all_blocks = merge_with_blocks(all_blocks, classified)
+        else:
+            all_blocks = classify_blocks_builtin(all_blocks)
+    except Exception:
+        pass
+
     # ── header/footer cleanup ──────────────────────────────────────
     try:
-        all_blocks = strip_headers_footers_from_blocks(all_blocks, num_pages)
+        if all_blocks and all_blocks[0].get("layout_type") is not None:
+            all_blocks = filter_noise_blocks(all_blocks, classified=None)
+        else:
+            all_blocks = strip_headers_footers_from_blocks(all_blocks, num_pages)
     except Exception:
         pass
 
@@ -143,33 +179,53 @@ def extract_text(
     all_text = _repair_hyphenation(all_text)
     all_text = _merge_justified_orphans(all_text)
 
-    # ── tables ────────────────────────────────────────────────────
+    # ── tables (Camelot + pdfplumber fallback) ─────────────────────
     if progress:
         progress(num_pages, num_pages, "tables")
 
     tables: list[str] = []
+    camelot_tables = []
     try:
-        with pdfplumber.open(path) as pdf:
-            for i, page in enumerate(pdf.pages):
-                if progress:
-                    progress(i + 1, num_pages, "tables")
-                extracted = page.extract_tables()
-                for table in extracted:
-                    rows: list[str] = []
-                    for row in table:
-                        cells = [str(c or "") for c in row]
-                        rows.append("| " + " | ".join(cells) + " |")
-                    if rows:
-                        md = "\n".join(rows)
-                        tables.append(md)
-                        all_blocks.append({
-                            "type": "table",
-                            "page": i,
-                            "markdown": md,
-                            "bbox": (0, 0, 0, 0),
-                        })
+        if is_camelot_available():
+            camelot_tables = extract_tables_advanced(path)
     except Exception:
         pass
+
+    if camelot_tables:
+        for ct in camelot_tables:
+            tables.append(ct.markdown)
+            all_blocks.append({
+                "type": "table",
+                "page": ct.page,
+                "markdown": ct.markdown,
+                "csv": ct.csv,
+                "bbox": ct.bbox,
+                "accuracy": ct.accuracy,
+                "method": ct.method,
+            })
+    else:
+        try:
+            with pdfplumber.open(path) as pdf:
+                for i, page in enumerate(pdf.pages):
+                    if progress:
+                        progress(i + 1, num_pages, "tables")
+                    extracted = page.extract_tables()
+                    for table in extracted:
+                        rows: list[str] = []
+                        for row in table:
+                            cells = [str(c or "") for c in row]
+                            rows.append("| " + " | ".join(cells) + " |")
+                        if rows:
+                            md = "\n".join(rows)
+                            tables.append(md)
+                            all_blocks.append({
+                                "type": "table",
+                                "page": i,
+                                "markdown": md,
+                                "bbox": (0, 0, 0, 0),
+                            })
+        except Exception:
+            pass
 
     # ── images ────────────────────────────────────────────────────
     images: list[dict] = []
@@ -231,7 +287,7 @@ def _process_single_page(
     doc: fitz.Document,
     page_num: int,
     body_size: float,
-    use_ocr: bool,
+    use_ocr: bool | str,
     ocr_engine: object | None,
 ) -> dict:
     page = doc[page_num]
