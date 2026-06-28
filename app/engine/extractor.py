@@ -17,6 +17,9 @@ _LIST_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^[a-z][.)]\s"), "ordered"),
 ]
 
+_HYPHEN_WRAP = re.compile(r"([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]{2,})-\s*$", re.MULTILINE)
+_SHORT_ORPHAN = re.compile(r"^\s*[a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]{1,3}\s*$")
+
 
 def extract_text(
     path: str | Path,
@@ -100,6 +103,8 @@ def extract_text(
             scanned_pages.append(pr["page"])
 
     all_text = "\n".join(pages_text)
+    all_text = _repair_hyphenation(all_text)
+    all_text = _merge_justified_orphans(all_text)
 
     # ── tables ────────────────────────────────────────────────────
     if progress:
@@ -428,6 +433,69 @@ def _block_text_len(block: dict) -> int:
         for span in line.get("spans", []):
             total += len(span["text"])
     return total
+
+
+_ENCLITICS = frozenset({
+    "se", "lo", "la", "los", "las",
+    "no", "na", "nos", "nas",
+    "lhe", "lhes",
+})
+
+
+def _repair_hyphenation(text: str) -> str:
+    """Join words broken by hyphenation across lines (Portuguese).
+    - Enclitic pronouns (configura-\nse → configura-se): keep hyphen
+    - Syllable breaks (esta-\nbelecimento → estabelecimento): remove hyphen
+    """
+    def _fix(m: re.Match) -> str:
+        a, b = m.group(1), m.group(2)
+        if b.lower() in _ENCLITICS:
+            return f"{a}-{b}"
+        return a + b
+
+    text = re.sub(
+        r"([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]{2,})-"
+        r"\n\s*"
+        r"([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]{2,})",
+        _fix,
+        text,
+    )
+    return text
+
+
+def _merge_justified_orphans(text: str) -> str:
+    """Merge short orphan words from justified text into proper paragraphs."""
+    lines = text.split("\n")
+    merged = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if not stripped:
+            merged.append(line)
+            i += 1
+            continue
+
+        is_orphan = _SHORT_ORPHAN.match(stripped) and not stripped.startswith("#")
+        is_heading_like = (
+            stripped.isupper() and len(stripped) > 3
+        ) or stripped.startswith("####")
+
+        if is_orphan and not is_heading_like and merged:
+            prev = merged[-1]
+            if prev and not prev.endswith("\n\n"):
+                if prev.endswith("-"):
+                    merged[-1] = prev.rstrip("-") + stripped
+                else:
+                    merged[-1] = prev.rstrip() + " " + stripped
+                i += 1
+                continue
+
+        merged.append(line)
+        i += 1
+
+    return "\n".join(merged)
 
 
 def _blocks_to_plain_text(blocks: list[dict], page_num: int) -> str:
