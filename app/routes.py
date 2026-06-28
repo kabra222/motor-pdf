@@ -322,9 +322,19 @@ async def clear_cache():
 
 @router.get("/health")
 async def health():
+    import subprocess
+    deploy_version = "unknown"
+    try:
+        deploy_version = subprocess.run(
+            ["git", "log", "--oneline", "-1"],
+            capture_output=True, text=True, timeout=2
+        ).stdout.strip() or "unknown"
+    except Exception:
+        deploy_version = "no-git"
     return {
         "status": "ok",
         "version": "0.4.0",
+        "deploy": deploy_version,
         "max_file_size_mb": MAX_FILE_SIZE >> 20,
         "max_pages": MAX_PAGES,
         "rate_limit": f"{RATE_LIMIT}/{RATE_WINDOW}s",
