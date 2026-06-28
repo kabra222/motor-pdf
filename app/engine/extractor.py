@@ -413,7 +413,7 @@ def _sequential_extract(
     doc: fitz.Document,
     num_pages: int,
     body_size: float,
-    use_ocr: bool,
+    use_ocr: bool | str,
     ocr_engine: object | None,
     progress: Callable | None = None,
 ) -> list[dict]:
@@ -430,7 +430,7 @@ def _parallel_extract(
     path: Path,
     num_pages: int,
     body_size: float,
-    use_ocr: bool,
+    use_ocr: bool | str,
     ocr_engine: object | None,
     progress: Callable | None = None,
 ) -> list[dict]:

@@ -78,7 +78,7 @@ async def extract(
     file: UploadFile = File(...),
     chunk_size: int = Form(default=2000, ge=100, le=32000),
     chunk_overlap: int = Form(default=200, ge=0, le=4000),
-    use_ocr: bool = Form(False),
+    use_ocr: str = Form(""),
     password: str | None = Form(None),
     format: FormatType = Form(FormatType.text),
     model: str = Form("gpt-4"),
@@ -92,7 +92,7 @@ async def extract(
     cache_params = {
         "chunk_size": chunk_size,
         "chunk_overlap": chunk_overlap,
-        "use_ocr": use_ocr,
+        "use_ocr": str(ocr_val),
         "model": model,
         "extract_images": extract_images,
         "use_bcpd": use_bcpd,
@@ -107,10 +107,14 @@ async def extract(
         tmp.write(data)
         tmp_path = tmp.name
 
+    ocr_val: bool | str = False
+    if use_ocr and use_ocr.lower() not in ("", "false", "0"):
+        ocr_val = use_ocr if use_ocr.lower() in ("easyocr", "paddleocr") else True
+
     try:
         result = extract_text(
             tmp_path,
-            use_ocr=use_ocr,
+            use_ocr=ocr_val,
             password=password,
             extract_images=extract_images,
         )
@@ -184,7 +188,7 @@ async def create_document(
     file: UploadFile = File(...),
     chunk_size: int = Form(default=2000, ge=100, le=32000),
     chunk_overlap: int = Form(default=200, ge=0, le=4000),
-    use_ocr: bool = Form(False),
+    use_ocr: str = Form(""),
     password: str | None = Form(None),
     model: str = Form("gpt-4"),
     extract_images: bool = Form(False),
@@ -194,6 +198,10 @@ async def create_document(
     _check_rate(x_api_key or "anonymous")
     data, filename = await _validate_file(file)
     job_id = await create_job()
+
+    ocr_val: bool | str = False
+    if use_ocr and use_ocr.lower() not in ("", "false", "0"):
+        ocr_val = use_ocr if use_ocr.lower() in ("easyocr", "paddleocr") else True
 
     suffix = Path(filename).suffix
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -207,7 +215,7 @@ async def create_document(
             filename,
             chunk_size,
             chunk_overlap,
-            use_ocr,
+            ocr_val,
             password,
             model,
             extract_images,

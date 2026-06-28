@@ -47,7 +47,7 @@ async def start_processing(
     filename: str,
     chunk_size: int,
     chunk_overlap: int,
-    use_ocr: bool,
+    use_ocr: bool | str,
     password: str | None,
     model: str,
     extract_images: bool,

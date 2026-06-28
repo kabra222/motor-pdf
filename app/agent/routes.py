@@ -39,7 +39,7 @@ async def agent_load(
     chunk_size: int = Form(default=2000),
     chunk_overlap: int = Form(default=200),
     use_bcpd: bool = Form(False),
-    use_ocr: bool = Form(False),
+    use_ocr: str = Form(""),
 ):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Envie um arquivo PDF")
@@ -50,8 +50,12 @@ async def agent_load(
         tmp.write(data)
         tmp_path = tmp.name
 
+    ocr_val: bool | str = False
+    if use_ocr and use_ocr.lower() not in ("", "false", "0"):
+        ocr_val = use_ocr if use_ocr.lower() in ("easyocr", "paddleocr") else True
+
     try:
-        result = extract_text(tmp_path, use_ocr=use_ocr)
+        result = extract_text(tmp_path, use_ocr=ocr_val)
         result["metadata"]["title"] = Path(file.filename).stem
         text = result["text"]
     finally:
