@@ -55,18 +55,25 @@ async def start_processing(
     loop = asyncio.get_running_loop()
 
     def progress(page: int, total: int, stage: str) -> None:
-        asyncio.run_coroutine_threadsafe(
-            _publish(job_id, "progress", {
-                "page": page,
-                "total": total,
-                "stage": stage,
-            }),
-            loop,
-        )
-        asyncio.run_coroutine_threadsafe(
-            storage_update_job(job_id, progress=page, total=total),
-            loop,
-        )
+        try:
+            asyncio.run_coroutine_threadsafe(
+                _publish(job_id, "progress", {
+                    "page": page,
+                    "total": total,
+                    "stage": stage,
+                }),
+                loop,
+            )
+        except Exception:
+            pass
+        if stage == "tables" or page % 5 == 0 or page == total:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    storage_update_job(job_id, progress=page, total=total),
+                    loop,
+                )
+            except Exception:
+                pass
 
     try:
         result = await asyncio.to_thread(

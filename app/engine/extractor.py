@@ -74,11 +74,16 @@ def extract_text(
     body_size = max(size_mass, key=size_mass.get) if size_mass else 12
 
     # ── page extraction ───────────────────────────────────────────
+    import math
+    _prog_interval = max(1, num_pages // 50)
+    _safe_progress = (lambda p, t, s: None) if progress is None else (
+        lambda p, t, s: progress(p, t, s) if p % _prog_interval == 0 or p == t else None
+    )
     use_parallel = parallel and 4 < num_pages <= 200
     if use_parallel:
-        page_results = _parallel_extract(doc, path, num_pages, body_size, use_ocr, ocr_engine, progress)
+        page_results = _parallel_extract(doc, path, num_pages, body_size, use_ocr, ocr_engine, _safe_progress)
     else:
-        page_results = _sequential_extract(doc, num_pages, body_size, use_ocr, ocr_engine, progress)
+        page_results = _sequential_extract(doc, num_pages, body_size, use_ocr, ocr_engine, _safe_progress)
 
     # ── column reordering ─────────────────────────────────────────
     all_blocks: list[dict] = []
