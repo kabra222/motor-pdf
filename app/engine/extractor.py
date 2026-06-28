@@ -74,7 +74,8 @@ def extract_text(
     body_size = max(size_mass, key=size_mass.get) if size_mass else 12
 
     # ── page extraction ───────────────────────────────────────────
-    if parallel and num_pages > 4:
+    use_parallel = parallel and 4 < num_pages <= 200
+    if use_parallel:
         page_results = _parallel_extract(doc, path, num_pages, body_size, use_ocr, ocr_engine, progress)
     else:
         page_results = _sequential_extract(doc, num_pages, body_size, use_ocr, ocr_engine, progress)
