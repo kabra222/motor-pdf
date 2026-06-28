@@ -147,6 +147,7 @@ async def extract(
         num_chunks=len(chunks),
         scanned_pages=result.get("scanned_pages", []),
         quality=result.get("quality"),
+        classified_count=result.get("classified_count", 0),
     )
 
     await cache.set(cache_key, extraction.model_dump())
@@ -172,6 +173,7 @@ async def extract(
             num_chunks=extraction.num_chunks,
             scanned_pages=extraction.scanned_pages,
             quality=extraction.quality,
+            classified_count=extraction.classified_count,
         )
 
     return extraction

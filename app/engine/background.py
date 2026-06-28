@@ -124,6 +124,7 @@ async def start_processing(
         num_chunks=len(chunks),
         scanned_pages=result.get("scanned_pages", []),
         quality=result.get("quality"),
+        classified_count=result.get("classified_count", 0),
     )
 
     await storage_update_job(
