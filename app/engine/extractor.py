@@ -8,6 +8,13 @@ from typing import Callable, Optional
 import fitz
 import pdfplumber
 
+from app.engine.layout import (
+    LayoutInfo,
+    analyze_blocks,
+    strip_headers_footers,
+    strip_headers_footers_from_blocks,
+    is_inside_table,
+)
 from app.engine.quality import score_extraction
 
 _LIST_PATTERNS: list[tuple[re.Pattern, str]] = [
@@ -102,7 +109,35 @@ def extract_text(
         if pr.get("scanned"):
             scanned_pages.append(pr["page"])
 
+    # ── layout analysis on blocks ──────────────────────────────────
+    try:
+        layout_info = analyze_blocks(all_blocks, num_pages)
+        if layout_info.has_multi_column:
+            pass
+    except Exception:
+        pass
+
+    # ── header/footer cleanup ──────────────────────────────────────
+    try:
+        all_blocks = strip_headers_footers_from_blocks(all_blocks, num_pages)
+    except Exception:
+        pass
+
+    # rebuild pages_text from cleaned blocks to keep sync
+    try:
+        cleaned_pages_text: list[str] = []
+        for p in range(num_pages):
+            page_lines: list[str] = []
+            for b in all_blocks:
+                if b.get("type") == "text" and b.get("page") == p:
+                    page_lines.append(b["text"])
+            cleaned_pages_text.append("\n".join(page_lines))
+        pages_text = cleaned_pages_text
+    except Exception:
+        pass
+
     all_text = "\n".join(pages_text)
+    all_text = strip_headers_footers(all_text, pages_text)
     all_text = _repair_hyphenation(all_text)
     all_text = _merge_justified_orphans(all_text)
 
@@ -316,7 +351,7 @@ def _sequential_extract(
     body_size: float,
     use_ocr: bool,
     ocr_engine: object | None,
-    progress: Callable | None,
+    progress: Callable | None = None,
 ) -> list[dict]:
     results = []
     for pn in range(num_pages):
@@ -333,7 +368,7 @@ def _parallel_extract(
     body_size: float,
     use_ocr: bool,
     ocr_engine: object | None,
-    progress: Callable | None,
+    progress: Callable | None = None,
 ) -> list[dict]:
     results: dict[int, dict] = {}
     workers = max(2, min(4, num_pages // 20))

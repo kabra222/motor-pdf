@@ -11,6 +11,7 @@ dependencies = [
     "pydantic>=2.0",
     "python-multipart>=0.0.18",
     "tiktoken>=0.9",
+    "pypdf>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -18,7 +19,8 @@ ocr = ["paddleocr>=2.9", "paddlepaddle>=3.0"]
 openai = ["openai>=1.0"]
 anthropic = ["anthropic>=0.40"]
 advanced = ["numpy>=1.24", "ruptures>=1.1", "pot>=0.9"]
-all = ["motor-pdf[ocr,openai,anthropic,advanced]"]
+vision = ["pdf2image>=1.17", "Pillow>=10.0"]
+all = ["motor-pdf[ocr,openai,anthropic,advanced,vision]"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
