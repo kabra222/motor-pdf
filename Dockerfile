@@ -9,6 +9,7 @@ COPY app/ app/
 
 RUN pip install --no-cache-dir ".[openai,anthropic,advanced]"
 
+# invalidate-cache: 2026-06-28-v3
 COPY . .
 
 EXPOSE 8000
