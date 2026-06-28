@@ -133,6 +133,7 @@ def extract_text(
 
     # ── layout analysis on blocks ──────────────────────────────────
     col_boundaries: list[float] | None = None
+    layout_info: LayoutInfo | None = None
     try:
         layout_info = analyze_blocks(all_blocks, num_pages)
         if layout_info.has_multi_column and layout_info.columns:
@@ -257,6 +258,13 @@ def extract_text(
     doc.close()
 
     # ── build result ──────────────────────────────────────────────
+    if layout_info is not None:
+        metadata["layout"] = {
+            "has_multi_column": layout_info.has_multi_column,
+            "columns": [{"x": c.x, "width": c.width} for c in layout_info.columns],
+            "has_header": layout_info.header_rect is not None,
+            "has_footer": layout_info.footer_rect is not None,
+        }
     result = {
         "text": all_text.strip(),
         "blocks": all_blocks,

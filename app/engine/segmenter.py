@@ -26,6 +26,13 @@ try:
 except ImportError:
     HAS_NUMPY = False
 
+try:
+    from sentence_transformers import SentenceTransformer
+
+    HAS_SENTENCE_TRANSFORMERS = True
+except ImportError:
+    HAS_SENTENCE_TRANSFORMERS = False
+
 
 @dataclass
 class Segment:
@@ -51,6 +58,21 @@ _LEGAL_TERMS = {
     "tese", "mérito", "pedido", "defesa", "recurso",
     "sentença", "acórdão", "decisão", "voto", "relatório",
 }
+
+
+def _compute_embedding_features(
+    units: list[str],
+) -> np.ndarray | None:
+    if not HAS_SENTENCE_TRANSFORMERS or len(units) < 3:
+        return None
+    try:
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        embs = model.encode(units, show_progress_bar=False)
+        if len(embs) < 3:
+            return None
+        return np.array(embs, dtype=np.float32)
+    except Exception:
+        return None
 
 
 def _extract_sentence_features(
@@ -137,6 +159,7 @@ def segment_bcpd(
     blocks: list[dict] | None = None,
     max_segments: int = 100,
     penalty: float | None = None,
+    use_embeddings: bool = False,
 ) -> SegmentationResult:
     if not HAS_RUPTURES:
         return SegmentationResult(segments=[], method="bcpd_unavailable")
@@ -148,6 +171,17 @@ def segment_bcpd(
     n = feat.shape[0]
     if n < 5:
         return SegmentationResult(segments=[], method="bcpd_too_short")
+
+    embed_feat: np.ndarray | None = None
+    embed_method: str = ""
+    if use_embeddings:
+        embed_feat = _compute_embedding_features(sentences)
+        if embed_feat is not None and embed_feat.shape[0] == n:
+            embed_feat = (embed_feat - embed_feat.mean(axis=0)) / (
+                embed_feat.std(axis=0) + 1e-8
+            )
+            feat = np.concatenate([feat, embed_feat], axis=1)
+            embed_method = "_simcse"
 
     if HAS_POT:
         custom = WassersteinTopologicalCost()
@@ -205,7 +239,8 @@ def segment_bcpd(
         )
         char_pos += seg_len
 
-    return SegmentationResult(segments=segments, method="bcpd_pelt_wasserstein" if HAS_POT else "bcpd_pelt")
+    base = "bcpd_pelt_wasserstein" if HAS_POT else "bcpd_pelt"
+    return SegmentationResult(segments=segments, method=base + embed_method)
 
 
 def segment_headings(
@@ -270,6 +305,7 @@ def segment_hybrid(
     text: str,
     blocks: list[dict] | None = None,
     chunk_size: int = 2000,
+    use_embeddings: bool = False,
 ) -> SegmentationResult:
     heading_result = segment_headings(text, blocks)
     if heading_result.segments:
@@ -277,7 +313,7 @@ def segment_hybrid(
         return heading_result
 
     if HAS_RUPTURES:
-        bcpd_result = segment_bcpd(text, blocks)
+        bcpd_result = segment_bcpd(text, blocks, use_embeddings=use_embeddings)
         if bcpd_result.segments:
             bcpd_result.segments = apply_guardrail(bcpd_result.segments, text)
             return bcpd_result
