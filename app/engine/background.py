@@ -86,8 +86,11 @@ async def start_processing(
         )
         result["metadata"]["title"] = Path(filename).stem
     except Exception as e:
-        await _publish(job_id, "error", {"error": str(e)})
-        await storage_update_job(job_id, status=JobStatus.error, error=str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"EXTRACTION ERROR: {e}\n{tb}", flush=True)
+        await _publish(job_id, "error", {"error": f"{e}\n{tb[:500]}"})
+        await storage_update_job(job_id, status=JobStatus.error, error=f"{e}\n{tb[:500]}")
         return
 
     try:
