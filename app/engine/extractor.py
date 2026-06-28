@@ -141,15 +141,13 @@ def extract_text(
     except Exception:
         pass
 
-    # ── semantic classification (builtin + Unstructured optional) ──
-    if is_unstructured_available():
-        try:
-            classified = classify_pdf(path, strategy="auto")
-            if classified:
-                all_blocks = merge_with_blocks(all_blocks, classified)
-        except Exception:
-            pass
-    all_blocks = classify_blocks_builtin(all_blocks)
+    # ── semantic classification (builtin) ──────────────────────────
+    classified_count = 0
+    try:
+        all_blocks = classify_blocks_builtin(all_blocks)
+        classified_count = sum(1 for b in all_blocks if b.get("layout_type") is not None)
+    except Exception as e:
+        pass
 
     # ── header/footer cleanup ──────────────────────────────────────
     try:
@@ -269,6 +267,7 @@ def extract_text(
         "metadata": metadata,
         "num_pages": num_pages,
         "scanned_pages": scanned_pages,
+        "classified_count": classified_count,
     }
 
     result["quality"] = score_extraction(result)
