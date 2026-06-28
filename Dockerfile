@@ -1,15 +1,13 @@
-FROM python:3.12-slim AS base
+FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ghostscript \
-    poppler-utils \
-    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir PyMuPDF pdfplumber fastapi uvicorn pydantic python-multipart tiktoken pypdf
 
 COPY pyproject.toml .
 COPY app/ app/
-RUN pip install --no-cache-dir ".[tables,openai,anthropic,advanced]"
+
+RUN pip install --no-cache-dir ".[openai,anthropic,advanced]"
 
 COPY . .
 
