@@ -1,32 +1,37 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "motor-pdf"
 version = "0.4.0"
-description = "Motor de extração de texto de PDFs para LLMs com Agente IA"
+description = "Motor de extração de texto de PDFs com agente IA"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "PyMuPDF>=1.25",
-    "pdfplumber>=0.11",
+    "PyMuPDF>=1.22",
+    "pdfplumber>=0.9",
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
     "pydantic>=2.0",
-    "python-multipart>=0.0.18",
-    "tiktoken>=0.9",
+    "python-multipart>=0.0.5",
+    "tiktoken>=0.5",
     "pypdf>=5.0",
 ]
 
 [project.optional-dependencies]
 ocr = ["paddleocr>=2.9", "paddlepaddle>=3.0"]
 openai = ["openai>=1.0"]
-anthropic = ["anthropic>=0.40"]
+anthropic = ["anthropic>=0.30"]
 advanced = ["numpy>=1.24", "ruptures>=1.1", "pot>=0.9"]
-vision = ["pdf2image>=1.17", "Pillow>=10.0"]
+vision = ["pdf2image>=1.16", "Pillow>=10.0"]
 tables = ["camelot-py>=0.11"]
 easyocr = ["easyocr>=1.7"]
-all = ["motor-pdf[ocr,openai,anthropic,advanced,vision,tables,easyocr]"]
+test = ["pytest>=7.0"]
+all = ["motor-pdf[ocr,openai,anthropic,advanced,vision,tables,easyocr,test]"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
 
-[build-system]
-requires = ["setuptools>=75"]
-build-backend = "setuptools.build_meta"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 120
