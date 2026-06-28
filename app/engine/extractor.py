@@ -143,11 +143,11 @@ def extract_text(
 
     # ── semantic classification (builtin) ──────────────────────────
     classified_count = 0
-    try:
-        all_blocks = classify_blocks_builtin(all_blocks)
-        classified_count = sum(1 for b in all_blocks if b.get("layout_type") is not None)
-    except Exception as e:
-        pass
+    for b in all_blocks:
+        if b.get("type") == "text":
+            b["layout_type"] = "heading" if b.get("is_heading") else "paragraph"
+            b["is_noise"] = False
+            classified_count += 1
 
     # ── header/footer cleanup ──────────────────────────────────────
     try:
