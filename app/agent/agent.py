@@ -14,7 +14,6 @@ from app.agent.tools import (
 )
 from .store import (
     PersistentVectorStore,
-    add_message,
     get_history,
 )
 
@@ -73,11 +72,6 @@ class PDFAgent:
             resp, tool_results = await self._tool_call_loop(messages)
         else:
             resp = await self.llm.chat(messages, stream=stream)
-
-        if session_id:
-            add_message(session_id, "user", message)
-            if isinstance(resp, str):
-                add_message(session_id, "assistant", resp)
 
         return resp
 
