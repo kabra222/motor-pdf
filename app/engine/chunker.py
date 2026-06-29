@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from app.models import Chunk
 
 try:
@@ -13,6 +15,8 @@ try:
     HAS_SEGMENTER = True
 except ImportError:
     HAS_SEGMENTER = False
+
+MIN_CHUNK_TOKENS = 50
 
 
 def _count_tokens(text: str, model: str = "gpt-4") -> int:
@@ -36,6 +40,70 @@ def _get_tail(text: str, target_tokens: int, model: str) -> str:
     return text[-cutoff:].lstrip()
 
 
+def _dedup_chunks(chunks: list[dict], model: str) -> list[dict]:
+    if len(chunks) < 2:
+        return chunks
+    deduped: list[dict] = [chunks[0]]
+    for c in chunks[1:]:
+        prev_text = deduped[-1]["text"]
+        curr_text = c["text"]
+        if curr_text in prev_text or prev_text in curr_text:
+            if len(curr_text) > len(prev_text):
+                deduped[-1] = c
+            continue
+        prev_lines = set(prev_text.split("\n"))
+        curr_lines = curr_text.split("\n")
+        new_lines = [l for l in curr_lines if l not in prev_lines or len(l.strip()) > 80]
+        if len(new_lines) < len(curr_lines) * 0.3:
+            continue
+        c["text"] = "\n".join(new_lines)
+        c["tokens"] = _count_tokens(c["text"], model)
+        if c["tokens"] >= MIN_CHUNK_TOKENS:
+            deduped.append(c)
+    return deduped
+
+
+def _merge_tiny_chunks(chunks: list[dict], model: str) -> list[dict]:
+    if not chunks:
+        return chunks
+    merged: list[dict] = []
+    i = 0
+    while i < len(chunks):
+        c = chunks[i]
+        if c["tokens"] < MIN_CHUNK_TOKENS and i + 1 < len(chunks):
+            next_c = chunks[i + 1]
+            combined_text = c["text"] + "\n\n" + next_c["text"]
+            combined_tokens = _count_tokens(combined_text, model)
+            if combined_tokens <= next_c.get("max_tokens", 999999):
+                merged.append({
+                    "text": combined_text,
+                    "page": c["page"],
+                    "heading": c.get("heading") or next_c.get("heading"),
+                    "section": c.get("section") or next_c.get("section"),
+                    "depth": c.get("depth", 0),
+                    "tokens": combined_tokens,
+                })
+                i += 2
+                continue
+        merged.append(c)
+        i += 1
+    return merged
+
+
+def _is_mostly_formatting(text: str) -> bool:
+    lines = text.strip().split("\n")
+    if not lines:
+        return True
+    formatting_lines = sum(
+        1 for l in lines
+        if re.match(r"^\s*[■•\-\*]\s*$", l)
+        or re.match(r"^\s*#{1,6}\s*$", l)
+        or re.match(r"^\s*\|.*\|\s*$", l)
+        or len(l.strip()) < 5
+    )
+    return formatting_lines > len(lines) * 0.6
+
+
 def chunk_text(
     text: str,
     pages_text: list[str] | None = None,
@@ -48,10 +116,46 @@ def chunk_text(
     if use_bcpd and HAS_SEGMENTER and blocks:
         seg_result = segment_hybrid(text, blocks, chunk_size)
         if seg_result.segments:
-            return _segments_to_chunks(seg_result.segments, chunk_size, chunk_overlap, model)
+            chunks = _segments_to_chunks(seg_result.segments, chunk_size, chunk_overlap, model)
+            return _postprocess(chunks, model)
     if blocks:
-        return _semantic_chunk(blocks, chunk_size, chunk_overlap, model)
-    return _fallback_chunk(text, pages_text or [text], chunk_size, chunk_overlap, model)
+        chunks = _semantic_chunk(blocks, chunk_size, chunk_overlap, model)
+        return _postprocess(chunks, model)
+    chunks = _fallback_chunk(text, pages_text or [text], chunk_size, chunk_overlap, model)
+    return _postprocess(chunks, model)
+
+
+def _postprocess(chunks: list[Chunk], model: str) -> list[Chunk]:
+    raw = [
+        {
+            "text": c.text,
+            "page": c.page,
+            "heading": c.heading,
+            "section": c.section,
+            "depth": c.depth,
+            "tokens": c.tokens,
+        }
+        for c in chunks
+    ]
+    raw = _merge_tiny_chunks(raw, model)
+    raw = _dedup_chunks(raw, model)
+    raw = [c for c in raw if not _is_mostly_formatting(c["text"])]
+    result: list[Chunk] = []
+    char_pos = 0
+    for i, c in enumerate(raw):
+        result.append(Chunk(
+            index=i,
+            text=c["text"],
+            page=c["page"],
+            section=c.get("section"),
+            heading=c.get("heading"),
+            tokens=c.get("tokens", 0),
+            depth=c.get("depth", 0),
+            start_char=char_pos,
+            end_char=char_pos + len(c["text"]),
+        ))
+        char_pos += len(c["text"])
+    return result
 
 
 def _segments_to_chunks(
@@ -115,8 +219,9 @@ def _semantic_chunk(
         if block["type"] == "text" and block.get("is_heading"):
             if current["text_parts"] or current["heading"] is not None:
                 sections.append(current)
+            ht = block["text"].strip().split("\n")[0][:100]
             current = {
-                "heading": block["text"],
+                "heading": ht,
                 "level": block.get("heading_level", 1),
                 "text_parts": [],
                 "pages": {block["page"]},
@@ -208,11 +313,7 @@ def _split_by_tokens(
                 "depth": seg.depth,
                 "tokens": buffer_tokens,
             })
-            if chunk_overlap > 0 and buffer:
-                overlap = _get_tail(buffer, chunk_overlap, model)
-                buffer = (overlap + "\n\n" + para).strip()
-            else:
-                buffer = para
+            buffer = para
     if buffer.strip():
         chunks.append({
             "text": buffer.strip(),
@@ -254,11 +355,7 @@ def _split_section(
                 "depth": section["level"],
                 "tokens": buffer_tokens,
             })
-            if chunk_overlap > 0 and buffer:
-                overlap = _get_tail(buffer, chunk_overlap, model)
-                buffer = (overlap + "\n\n" + para).strip()
-            else:
-                buffer = para
+            buffer = para
 
     if buffer.strip():
         chunks.append({
