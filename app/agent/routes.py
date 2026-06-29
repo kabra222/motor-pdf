@@ -20,7 +20,7 @@ from app.agent.store import (
     get_session,
     list_sessions,
 )
-from app.agent.tools import deep_analyze, extract_structure
+from app.agent.tools import deep_analyze, extract_structure, map_arguments
 from app.engine.chunker import chunk_text
 from app.engine.extractor import extract_text
 
@@ -264,4 +264,13 @@ async def agent_structure():
     if not agent.extraction_result:
         raise HTTPException(400, "Nenhum documento carregado. Use /agent/load primeiro.")
     result = await extract_structure(agent.extraction_result, agent.llm)
+    return result
+
+
+@agent_router.post("/agent/mindmap")
+async def agent_mindmap():
+    agent = await get_agent()
+    if not agent.extraction_result:
+        raise HTTPException(400, "Nenhum documento carregado. Use /agent/load primeiro.")
+    result = await map_arguments(agent.extraction_result, agent.llm)
     return result

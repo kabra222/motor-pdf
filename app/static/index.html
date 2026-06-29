@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Motor PDF - Agente IA</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script src="https://cdn.jsdelivr.net/npm/markmap-view@0.15.4"></script>
+<script src="https://cdn.jsdelivr.net/npm/markmap-lib@0.15.4"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -154,6 +157,7 @@ main { max-width: 960px; margin: 1.5rem auto; padding: 0 1rem; }
 <div class="agent-tools">
 <button id="toolAnalyze" disabled>🔬 Análise Profunda</button>
 <button id="toolStructure" disabled>📐 Estrutura</button>
+<button id="toolMindmap" disabled>🧠 Mapa Mental</button>
 <button id="toolSummarize" disabled>📝 Resumir</button>
 <button id="toolClassify" disabled>🏷️ Classificar</button>
 <button id="toolExtract" disabled>🔍 Extrair Entidades</button>
@@ -172,6 +176,20 @@ main { max-width: 960px; margin: 1.5rem auto; padding: 0 1rem; }
 </div>
 </div>
 </div>
+</div>
+
+<!-- MINDMAP MODAL -->
+<div id="mindmapModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.85);z-index:1000;overflow:hidden">
+<div style="display:flex;justify-content:space-between;align-items:center;padding:.75rem 1.5rem;background:#1e293b;border-bottom:1px solid #334155">
+<h3 style="color:#38bdf8;font-size:1rem">🧠 Mapa Mental — Estrutura Argumentativa</h3>
+<div style="display:flex;gap:.5rem;align-items:center">
+<span id="mindmapStatus" style="color:#64748b;font-size:.75rem"></span>
+<button onclick="document.getElementById('mindmapModal').style.display='none'" style="background:#334155;border:none;color:#e2e8f0;padding:.4rem .8rem;border-radius:6px;cursor:pointer;font-size:.8rem">Fechar</button>
+</div>
+</div>
+<div id="mindmapContainer" style="width:100%;height:calc(100% - 50px)"></div>
+</div>
+
 </main>
 
 <script>
@@ -336,6 +354,7 @@ chatInput.disabled = !on;
 chatSend.disabled = !on;
 document.getElementById('toolAnalyze').disabled = !on;
 document.getElementById('toolStructure').disabled = !on;
+document.getElementById('toolMindmap').disabled = !on;
 document.getElementById('toolSummarize').disabled = !on;
 document.getElementById('toolClassify').disabled = !on;
 document.getElementById('toolExtract').disabled = !on;
@@ -400,6 +419,29 @@ chatSend.disabled = false; chatInput.disabled = false; chatInput.focus();
 }
 
 // ── Agent tools ───────────────────────────────────────────────
+document.getElementById('toolMindmap').addEventListener('click', async () => {
+const btn = document.getElementById('toolMindmap'); btn.disabled = true;
+addChatMessage('user', '🧠 Gere o mapa mental argumentativo deste documento');
+const msgDiv = addChatMessage('assistant', '<span class="typing">Minerando argumentos...</span>');
+try {
+const r = await fetch('/api/v1/agent/mindmap', { method: 'POST' });
+const d = await r.json();
+if (d.error) {
+msgDiv.querySelector('.msg-bubble').innerHTML = marked('Erro: ' + d.error);
+} else {
+const md = d.markmap_markdown || '';
+if (md) {
+renderMindmap(md);
+msgDiv.querySelector('.msg-bubble').innerHTML = marked('🧠 **Mapa mental gerado!** Clique no botão "Ver Mapa" para abrir a visualização interativa.') +
+'<br><button onclick="document.getElementById(\'mindmapModal\').style.display=\'block\'" style="margin-top:.5rem;background:#38bdf8;color:#0f172a;border:none;padding:.4rem .8rem;border-radius:6px;cursor:pointer;font-size:.8rem;font-weight:600">Ver Mapa</button>';
+} else {
+msgDiv.querySelector('.msg-bubble').innerHTML = marked('Sem dados para mapa mental');
+}
+}
+} catch(e) { msgDiv.querySelector('.msg-bubble').textContent = 'Erro: '+e.message; }
+btn.disabled = false;
+});
+
 document.getElementById('toolAnalyze').addEventListener('click', async () => {
 const btn = document.getElementById('toolAnalyze'); btn.disabled = true;
 addChatMessage('user', '🔬 Faça uma análise profunda deste documento');
@@ -502,6 +544,47 @@ if (type === 'loading') statusEl.innerHTML = msg + '<div class="progress-bar" st
 else statusEl.textContent = msg;
 statusEl.style.display = 'block';
 }
+// ── Mindmap ───────────────────────────────────────────────────
+let markmapInstance = null;
+
+async function renderMindmap(md) {
+const modal = document.getElementById('mindmapModal');
+const container = document.getElementById('mindmapContainer');
+const statusEl = document.getElementById('mindmapStatus');
+modal.style.display = 'block';
+container.innerHTML = '';
+statusEl.textContent = 'Gerando mapa...';
+
+try {
+const { Transformer } = markmap;
+const transformer = new Transformer();
+const { root } = transformer.transform(md);
+
+const { Markmap } = markmap;
+const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+svg.style.width = '100%';
+svg.style.height = '100%';
+container.appendChild(svg);
+
+markmapInstance = Markmap.create(svg, {
+autoFit: true,
+color: (node) => {
+const depth = node.depth;
+const colors = ['#38bdf8', '#22c55e', '#f59e0b', '#ef4444', '#a78bfa', '#f472b6'];
+return colors[depth % colors.length];
+},
+paddingX: 16,
+maxWidth: 300,
+initialExpandLevel: 3,
+}, root);
+
+statusEl.textContent = 'Pronto — clique nos nós para expandir/recolher';
+} catch(e) {
+statusEl.textContent = 'Erro: ' + e.message;
+container.innerHTML = '<div style="padding:2rem;color:#fca5a5;text-align:center">Erro ao renderizar mapa mental: ' + e.message + '</div>';
+}
+}
+
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function marked(s) {
 if (!s) return '';
@@ -514,6 +597,9 @@ return esc(s)
 </script>
 <style>
 @keyframes shimmer { 0%{opacity:1} 50%{opacity:.4} 100%{opacity:1} }
+#mindmapModal .markmap-node text { fill: #e2e8f0; font-size: 13px; }
+#mindmapModal .markmap-link { fill: none; stroke: #475569; stroke-width: 1.5; }
+#mindmapModal .markmap-node circle { fill: #38bdf8; stroke: #0f172a; stroke-width: 2; }
 </style>
 </body>
 </html>

@@ -375,6 +375,14 @@ _BOILERPLATE_HEADINGS = frozenset({
 })
 
 
+async def map_arguments(
+    extraction_result: dict,
+    llm: LLMProvider,
+) -> dict:
+    from app.engine.argument_miner import mine_arguments
+    return await mine_arguments(extraction_result, llm)
+
+
 async def extract_structure(
     extraction_result: dict,
     llm: LLMProvider | None = None,
@@ -550,6 +558,24 @@ TOOLS = [
                 "utilizadas, tabelas, qualidade e metadados. Use quando o "
                 "usuário pedir a estrutura, organização, sumário, ou "
                 "visão geral do documento."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "map_arguments",
+            "description": (
+                "Análise argumentativa e mapa mental do documento. Extrai "
+                "a estrutura de argumentos, teses, premissas, evidências, "
+                "contra-argumentos e conclusões. Retorna um mapa mental "
+                "interativo. Use quando o usuário pedir análise argumentativa, "
+                "mapa mental, estrutura de argumentos, ou raciocínio do documento."
             ),
             "parameters": {
                 "type": "object",

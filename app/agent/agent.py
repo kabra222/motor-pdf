@@ -11,6 +11,7 @@ from app.agent.tools import (
     deep_analyze,
     extract_entities,
     extract_structure,
+    map_arguments,
     search,
     summarize,
 )
@@ -178,6 +179,10 @@ class PDFAgent:
             if not self.extraction_result:
                 return {"error": "Nenhum documento carregado. Use /agent/load primeiro."}
             return await extract_structure(self.extraction_result, self.llm)
+        elif name == "map_arguments":
+            if not self.extraction_result:
+                return {"error": "Nenhum documento carregado. Use /agent/load primeiro."}
+            return await map_arguments(self.extraction_result, self.llm)
         return {"error": f"Ferramenta desconhecida: {name}"}
 
     def _store_text_fallback(self) -> str:
