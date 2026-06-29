@@ -5,7 +5,8 @@ import re
 _HYPHEN_PATTERN = re.compile(
     r"(\w[-\w]*\w)-\n\s*(\w[-\w]*\w)", re.UNICODE
 )
-_ORPHAN_LINE = re.compile(r"^\s*\w{1,3}\s*$", re.UNICODE)
+_ORPHAN_LINE = re.compile(r"^\s*[a-zA-Zà-úÀ-Ú]{1,4}\s*$", re.UNICODE)
+_ORPHAN_EXCLUDE = re.compile(r"^\s*(?:\d+|[IVXLCDM]+|[A-Z]\.|#|§|•|—|-{2,}|[.…]{2,})")
 
 
 def score_extraction(result: dict) -> dict:
@@ -33,6 +34,7 @@ def score_extraction(result: dict) -> dict:
     orphan_count = sum(
         1 for line in text_lines
         if _ORPHAN_LINE.match(line)
+        and not _ORPHAN_EXCLUDE.match(line)
         and not line.strip().startswith("#")
     )
     orphan_penalty = min(1.0, orphan_count / max(total_lines * 0.05, 1))
@@ -65,11 +67,12 @@ def score_extraction(result: dict) -> dict:
     else:
         dims.append(("headings", 0.0, "Nenhum heading detectado"))
 
-    table_score = min(1.0, len(tables) / max(num_pages * 0.1, 1))
+    non_empty_tables = sum(1 for t in tables if len(t) > 50 and "|" in t)
+    table_score = min(1.0, non_empty_tables / max(num_pages * 0.1, 1))
     dims.append((
         "tables",
         round(table_score, 2),
-        f"{len(tables)} tabelas extraidas",
+        f"{non_empty_tables} tabelas com conteudo (de {len(tables)} detectadas)",
     ))
 
     scanned_pct = len(scanned) / max(num_pages, 1)
@@ -80,11 +83,19 @@ def score_extraction(result: dict) -> dict:
     ))
 
     avg_line_len = sum(len(l) for l in text_lines) / max(len(text_lines), 1)
-    line_quality = min(1.0, max(0.0, avg_line_len / 80))
+    text_blocks = [b for b in blocks if b.get("type") == "text" and b.get("bbox")]
+    if text_blocks:
+        xs = sorted(set(round(b["bbox"][0]) for b in text_blocks))
+        col_gaps = [xs[i + 1] - xs[i] for i in range(len(xs) - 1) if xs[i + 1] - xs[i] > 50]
+        col_count = 1 + len(col_gaps)
+    else:
+        col_count = 1
+    target_chars = max(35, 80 - (col_count - 1) * 20)
+    line_quality = min(1.0, max(0.0, avg_line_len / target_chars))
     dims.append((
         "line_quality",
         round(line_quality, 2),
-        f"Media {int(avg_line_len)} caracteres/linha",
+        f"Media {int(avg_line_len)} caracteres/linha ({col_count} coluna(s))",
     ))
 
     overall = round(sum(s for _, s, _ in dims) / len(dims), 2)

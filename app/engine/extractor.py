@@ -9,9 +9,12 @@ from pathlib import Path
 import fitz
 import pdfplumber
 
+from app.engine.boilerplate import filter_boilerplate, filter_boilerplate_from_blocks
 from app.engine.classifier import (
     filter_noise_blocks,
 )
+from app.engine.math import has_math_patterns, reconstruct_math_text
+from app.engine.reading_order import reorder_blocks
 from app.engine.layout import (
     LayoutInfo,
     analyze_blocks,
@@ -167,7 +170,7 @@ def extract_text(
             layout_info = analyze_blocks(all_blocks, num_pages)
             if layout_info.has_multi_column and layout_info.columns:
                 col_boundaries = [c.x for c in layout_info.columns]
-                all_blocks = _reorder_columns(all_blocks, col_boundaries)
+                all_blocks = reorder_blocks(all_blocks, col_boundaries)
         except Exception:
             pass
     
@@ -185,6 +188,18 @@ def extract_text(
         except Exception:
             with contextlib.suppress(Exception):
                 all_blocks = strip_headers_footers_from_blocks(all_blocks, num_pages)
+
+        # rebuild headings from enriched blocks (classification may update levels)
+        all_headings = [
+            {
+                "level": b.get("heading_level", 4),
+                "text": b.get("text", ""),
+                "page": b.get("page", 0),
+                "bbox": b.get("bbox", (0, 0, 0, 0)),
+            }
+            for b in all_blocks
+            if b.get("type") == "text" and b.get("is_heading")
+        ]
     
         # rebuild pages_text from cleaned blocks to keep sync
         try:
@@ -203,6 +218,10 @@ def extract_text(
         all_text = strip_headers_footers(all_text, pages_text)
         all_text = _repair_hyphenation(all_text)
         all_text = _merge_justified_orphans(all_text)
+
+        # ── math reconstruction ─────────────────────────────────────────
+        if has_math_patterns(all_text):
+            all_text = reconstruct_math_text(all_text)
     
         # ── tables (Camelot + pdfplumber fallback) ─────────────────────
         if progress:
@@ -333,6 +352,9 @@ def extract_text(
             "links": links,
         }
     
+        result["text"] = filter_boilerplate(result["text"])
+        result["blocks"] = filter_boilerplate_from_blocks(result["blocks"])
+
         result["quality"] = score_extraction(result)
     
         if progress:

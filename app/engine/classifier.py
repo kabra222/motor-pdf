@@ -31,6 +31,36 @@ _HEADER_LIKE = re.compile(
     r"^\s*(cap[ií]tulo|se[cç][aã]o|parte|t[ií]tulo|livro)\s+\d+",
     re.IGNORECASE,
 )
+_NUMBERED_HEADING = re.compile(
+    r"^\s*(?:"
+    r"\d+\.\d+(?:\.\d+)*(?:\s+[—–‑\-]\s*|\s+)(?=[A-ZÀ-Ú])"     # 9.8 Title / 1.2.3.4 Title
+    r"|"
+    r"\d+(?:\s+[—–‑\-]\s*|\s+)(?=[A-ZÀ-Ú])(?!.*\d{2,}\s)"     # 1 Title / 2 Background (not table data)
+    r"|"
+    r"[IVXLCDM]+\.\s+"                                           # I.  II.
+    r"|"
+    r"[A-Z]\.\s+"                                                 # A.  B.
+    r"|"
+    r"(?:EXERC[ÍI]CIO|EXERCISE|PROBLEM|QUEST[AÃ]O"
+    r"|SECTION|CHAPTER)\s+\d+(?:\.\d+)*"                         # EXERCISE 9.10
+    r"|"
+    r"(?:APPENDIX|APP[.]|ANEXO)\s+[A-Z0-9]+"                    # APPENDIX A
+    r")",
+    re.IGNORECASE,
+)
+_SHORT_UPPER_HEADING = re.compile(
+    r"^\s*[A-ZÀ-Ú][A-ZÀ-Ú\s]{2,30}$",
+)
+_COMMON_HEADING_WORDS = frozenset({
+    "abstract", "resumo", "introduction", "introdução",
+    "conclusion", "conclusão", "conclusions", "conclusões",
+    "references", "referências", "bibliography", "bibliografia",
+    "acknowledgments", "acknowledgements", "agradecimentos",
+    "appendix", "apêndice", "anexo", "annex",
+    "background", "methods", "methodology", "metodologia",
+    "results", "resultados", "discussion", "discussão",
+    "summary", "resumo", "overview",
+})
 
 
 def classify_blocks_builtin(blocks: list[dict]) -> list[dict]:
@@ -71,12 +101,35 @@ def classify_blocks_builtin(blocks: list[dict]) -> list[dict]:
         enriched_b = dict(b)
         if b.get("type") == "text":
             text = b.get("text", "").strip()
-            label = _classify_block_text(text, b, likely_headers, likely_footers)
+            label = _classify_block_text(text, enriched_b, likely_headers, likely_footers)
             enriched_b["layout_type"] = label
             enriched_b["is_noise"] = label in ("header", "footer", "page_number")
         enriched.append(enriched_b)
 
     return enriched
+
+
+def _infer_heading_level(text: str) -> int | None:
+    m = _NUMBERED_HEADING.match(text)
+    if not m:
+        return None
+    prefix = m.group(0).strip()
+    if re.match(
+        r"^(?:EXERC[ÍI]CIO|EXERCISE|PROBLEM|QUEST[AÃ]O|SECTION|CHAPTER|APPENDIX|ANEXO)",
+        prefix,
+        re.IGNORECASE,
+    ):
+        return 1
+    if re.match(r"^[IVXLCDM]+\.", prefix):
+        return 1
+    if re.match(r"^[A-Z]\.", prefix):
+        return 2
+    dot_count = prefix.count(".")
+    if dot_count >= 2:
+        return 3
+    if dot_count == 1:
+        return 2
+    return 1
 
 
 def _classify_block_text(
@@ -85,9 +138,6 @@ def _classify_block_text(
     likely_headers: set[str],
     likely_footers: set[str],
 ) -> str:
-    if block.get("is_heading"):
-        return "heading"
-
     if _NUMERIC_PAGE.match(text):
         return "page_number"
     if _PAGE_LABEL.match(text):
@@ -98,7 +148,22 @@ def _classify_block_text(
     if text in likely_footers:
         return "footer"
 
+    single_line = re.sub(r"\s+", " ", text).strip()
+    inferred = _infer_heading_level(text) or _infer_heading_level(single_line)
+    if inferred is not None:
+        block["heading_level"] = inferred
+        block["is_heading"] = True
+        return "heading"
+
+    if block.get("is_heading"):
+        return "heading"
+
     if _HEADER_LIKE.match(text):
+        return "heading"
+
+    if single_line.lower() in _COMMON_HEADING_WORDS:
+        block["heading_level"] = 1
+        block["is_heading"] = True
         return "heading"
 
     if block.get("is_list_item"):
@@ -106,6 +171,11 @@ def _classify_block_text(
 
     if block.get("inside_table"):
         return "table_cell"
+
+    if _SHORT_UPPER_HEADING.match(text) or _SHORT_UPPER_HEADING.match(single_line):
+        block["heading_level"] = 2
+        block["is_heading"] = True
+        return "heading"
 
     if len(text) < 15:
         return "short_text"
