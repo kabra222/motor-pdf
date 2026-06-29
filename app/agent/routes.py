@@ -64,7 +64,8 @@ async def agent_load(
 
     try:
         result = extract_text(tmp_path, use_ocr=ocr_val)
-        result["metadata"]["title"] = Path(file.filename).stem
+        if not result["metadata"].get("title"):
+            result["metadata"]["title"] = Path(file.filename).stem
         text = result["text"]
     finally:
         Path(tmp_path).unlink(missing_ok=True)
@@ -183,7 +184,7 @@ async def agent_summarize(
 
     store_text = "\n".join(
         r["text"] for r in agent.store.search(
-            [0.0] * 384 if not hasattr(agent.llm, 'embed') else [],
+            [0.0] * 384,
             top_k=100, threshold=-1
         )
     ) if agent.store.size > 0 else ""

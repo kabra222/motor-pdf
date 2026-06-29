@@ -115,31 +115,37 @@ async def extract(
     cache_key = cache.make_key(data, cache_params)
     cached = await cache.get(cache_key)
     if cached:
-        extraction = ExtractionResult(**cached)
-        if format != FormatType.text:
-            formatted = format_result(
-                extraction.text,
-                extraction.blocks,
-                extraction.headings,
-                extraction.tables,
-                format,
-            )
-            return ExtractionResult(
-                filename=extraction.filename,
-                text=formatted,
-                chunks=extraction.chunks,
-                blocks=extraction.blocks,
-                headings=extraction.headings,
-                tables=extraction.tables,
-                images=extraction.images,
-                metadata=extraction.metadata,
-                num_pages=extraction.num_pages,
-                num_chunks=extraction.num_chunks,
-                scanned_pages=extraction.scanned_pages,
-                quality=extraction.quality,
-                classified_count=extraction.classified_count,
-            )
-        return extraction
+        try:
+            extraction = ExtractionResult(**cached)
+        except Exception:
+            pass
+        else:
+            if format != FormatType.text:
+                formatted = format_result(
+                    extraction.text,
+                    extraction.blocks,
+                    extraction.headings,
+                    extraction.tables,
+                    format,
+                )
+                return ExtractionResult(
+                    filename=extraction.filename,
+                    text=formatted,
+                    chunks=extraction.chunks,
+                    blocks=extraction.blocks,
+                    headings=extraction.headings,
+                    tables=extraction.tables,
+                    images=extraction.images,
+                    metadata=extraction.metadata,
+                    num_pages=extraction.num_pages,
+                    num_chunks=extraction.num_chunks,
+                    scanned_pages=extraction.scanned_pages,
+                    quality=extraction.quality,
+                    classified_count=extraction.classified_count,
+                    annotations=extraction.annotations,
+                    links=extraction.links,
+                )
+            return extraction
 
     suffix = Path(filename).suffix
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -147,7 +153,8 @@ async def extract(
         tmp_path = tmp.name
 
     try:
-        result = extract_text(
+        result = await asyncio.to_thread(
+            extract_text,
             tmp_path,
             use_ocr=ocr_val,
             password=password,

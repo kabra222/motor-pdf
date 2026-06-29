@@ -83,262 +83,268 @@ def extract_text(
 
     doc = fitz.open(path)
 
-    if doc.is_encrypted:
-        if not password:
-            raise ValueError("PDF criptografado. Forneça uma senha.")
-        if not doc.authenticate(password):
-            raise ValueError("Senha inválida")
-
-    metadata = {
-        "title": doc.metadata.get("title") or "",
-        "author": doc.metadata.get("author") or "",
-        "subject": doc.metadata.get("subject") or "",
-        "keywords": doc.metadata.get("keywords") or "",
-        "encrypted": doc.is_encrypted,
-    }
-
-    num_pages = len(doc)
-    if progress:
-        progress(0, num_pages, "scanning")
-
-    ocr_engine = None
-    use_easyocr = (
-        use_ocr == "easyocr"
-        or (isinstance(use_ocr, bool) and use_ocr and is_easyocr_available() and not hasattr(__builtins__, 'test'))
-    )
-    if use_ocr:
-        if use_easyocr:
-            ocr_engine = EasyOCREngine()
-        else:
-            try:
-                from .ocr import OCREngine
-                ocr_engine = OCREngine()
-            except Exception:
-                pass
-
-    # ── detect body font size ─────────────────────────────────────
-    size_mass: dict[float, int] = {}
-    for page_num in range(num_pages):
-        page = doc[page_num]
-        page_dict = page.get_text("dict")
-        for block in page_dict["blocks"]:
-            if not _is_text_block(block):
-                continue
-            for line in block["lines"]:
-                for span in line["spans"]:
-                    text = span["text"].strip()
-                    if len(text) > 1:
-                        sz = round(span["size"], 1)
-                        if 7 <= sz <= 30:
-                            size_mass[sz] = size_mass.get(sz, 0) + len(text)
-
-    body_size = max(size_mass, key=size_mass.get) if size_mass else 12
-
-    # ── page extraction ───────────────────────────────────────────
-    _prog_interval = max(1, num_pages // 50)
-    _safe_progress = (lambda p, t, s: None) if progress is None else (
-        lambda p, t, s: progress(p, t, s) if p % _prog_interval == 0 or p == t else None
-    )
-    use_parallel = parallel and num_pages > 4
-    if use_parallel:
-        page_results = _parallel_extract(doc, path, num_pages, body_size, use_ocr, ocr_engine, _safe_progress)
-    else:
-        page_results = _sequential_extract(doc, num_pages, body_size, use_ocr, ocr_engine, _safe_progress)
-
-    # ── column reordering ─────────────────────────────────────────
-    all_blocks: list[dict] = []
-    all_headings: list[dict] = []
-    pages_text: list[str] = []
-    scanned_pages: list[int] = []
-
-    for pr in page_results:
-        pr["blocks"] = _reorder_columns(pr["blocks"])
-        all_blocks.extend(pr["blocks"])
-        all_headings.extend(pr["headings"])
-        pages_text.append(pr["text"])
-        if pr.get("scanned"):
-            scanned_pages.append(pr["page"])
-
-    # ── layout analysis on blocks ──────────────────────────────────
-    col_boundaries: list[float] | None = None
-    layout_info: LayoutInfo | None = None
     try:
-        layout_info = analyze_blocks(all_blocks, num_pages)
-        if layout_info.has_multi_column and layout_info.columns:
-            col_boundaries = [c.x for c in layout_info.columns]
-            all_blocks = _reorder_columns(all_blocks, col_boundaries)
-    except Exception:
-        pass
-
-    # ── semantic classification (builtin) ──────────────────────────
-    classified_count = 0
-    for b in all_blocks:
-        if b.get("type") == "text":
-            b["layout_type"] = "heading" if b.get("is_heading") else "paragraph"
-            b["is_noise"] = False
-            classified_count += 1
-
-    # ── header/footer cleanup ──────────────────────────────────────
-    try:
-        all_blocks = filter_noise_blocks(all_blocks, classified=None)
-    except Exception:
-        with contextlib.suppress(Exception):
-            all_blocks = strip_headers_footers_from_blocks(all_blocks, num_pages)
-
-    # rebuild pages_text from cleaned blocks to keep sync
-    try:
-        cleaned_pages_text: list[str] = []
-        for p in range(num_pages):
-            page_lines: list[str] = []
-            for b in all_blocks:
-                if b.get("type") == "text" and b.get("page") == p:
-                    page_lines.append(b["text"])
-            cleaned_pages_text.append("\n".join(page_lines))
-        pages_text = cleaned_pages_text
-    except Exception:
-        pass
-
-    all_text = "\n".join(pages_text)
-    all_text = strip_headers_footers(all_text, pages_text)
-    all_text = _repair_hyphenation(all_text)
-    all_text = _merge_justified_orphans(all_text)
-
-    # ── tables (Camelot + pdfplumber fallback) ─────────────────────
-    if progress:
-        progress(num_pages, num_pages, "tables")
-
-    tables: list[str] = []
-    camelot_tables = []
-    try:
-        if is_camelot_available():
-            camelot_tables = extract_tables_advanced(path)
-    except Exception:
-        pass
-
-    if camelot_tables:
-        for ct in camelot_tables:
-            tables.append(ct.markdown)
-            all_blocks.append({
-                "type": "table",
-                "page": ct.page,
-                "markdown": ct.markdown,
-                "csv": ct.csv,
-                "bbox": ct.bbox,
-                "accuracy": ct.accuracy,
-                "method": ct.method,
-            })
-    else:
-        try:
-            with pdfplumber.open(path) as pdf:
-                for i, page in enumerate(pdf.pages):
-                    if progress:
-                        progress(i + 1, num_pages, "tables")
-                    extracted = page.extract_tables()
-                    for table in extracted:
-                        rows: list[str] = []
-                        for row in table:
-                            cells = [str(c or "") for c in row]
-                            rows.append("| " + " | ".join(cells) + " |")
-                        if rows:
-                            md = "\n".join(rows)
-                            tables.append(md)
-                            all_blocks.append({
-                                "type": "table",
-                                "page": i,
-                                "markdown": md,
-                                "bbox": (0, 0, 0, 0),
-                            })
-        except Exception:
-            pass
-
-    # ── images ────────────────────────────────────────────────────
-    images: list[dict] = []
-    if extract_images:
+        if doc.is_encrypted:
+            if not password:
+                raise ValueError("PDF criptografado. Forneça uma senha.")
+            if not doc.authenticate(password):
+                raise ValueError("Senha inválida")
+    
+        metadata = {
+            "title": doc.metadata.get("title") or "",
+            "author": doc.metadata.get("author") or "",
+            "subject": doc.metadata.get("subject") or "",
+            "keywords": doc.metadata.get("keywords") or "",
+            "encrypted": doc.is_encrypted,
+        }
+    
+        num_pages = len(doc)
         if progress:
-            progress(0, 1, "images")
-        img_count = 0
-        for page_num in range(num_pages):
-            page = doc[page_num]
-            for img in page.get_images(full=True):
-                if img_count >= 20:
-                    break
-                xref = img[0]
+            progress(0, num_pages, "scanning")
+    
+        ocr_engine = None
+        use_easyocr = (
+            use_ocr == "easyocr"
+            or (isinstance(use_ocr, bool) and use_ocr and is_easyocr_available() and not hasattr(__builtins__, 'test'))
+        )
+        if use_ocr:
+            if use_easyocr:
+                ocr_engine = EasyOCREngine()
+            else:
                 try:
-                    base = doc.extract_image(xref)
-                    if base["width"] * base["height"] < 2_000_000:
-                        import base64 as b64
-                        b64_str = b64.b64encode(base["image"]).decode()
-                        images.append({
-                            "data": b64_str,
-                            "format": base.get("ext", "png"),
-                            "width": base["width"],
-                            "height": base["height"],
-                            "page": page_num,
-                        })
-                        img_count += 1
+                    from .ocr import OCREngine
+                    ocr_engine = OCREngine()
                 except Exception:
                     pass
-            if img_count >= 20:
-                break
-
-    # ── annotations & links ──────────────────────────────────────
-    annotations: list[dict] = []
-    links: list[dict] = []
-    for page_num in range(num_pages):
-        page = doc[page_num]
-        for annot in page.annots() or []:
-            annot_type = _ANNOT_TYPES.get(annot.type[0], "unknown")
-            annot_info = {
-                "page": page_num,
-                "type": annot_type,
-                "content": annot.info.get("content", ""),
-                "bbox": list(annot.rect) if annot.rect else None,
+    
+        # ── detect body font size ─────────────────────────────────────
+        size_mass: dict[float, int] = {}
+        for page_num in range(num_pages):
+            page = doc[page_num]
+            page_dict = page.get_text("dict")
+            for block in page_dict["blocks"]:
+                if not _is_text_block(block):
+                    continue
+                for line in block["lines"]:
+                    for span in line["spans"]:
+                        text = span["text"].strip()
+                        if len(text) > 1:
+                            sz = round(span["size"], 1)
+                            if 7 <= sz <= 30:
+                                size_mass[sz] = size_mass.get(sz, 0) + len(text)
+    
+        body_size = max(size_mass, key=size_mass.get) if size_mass else 12
+    
+        # ── page extraction ───────────────────────────────────────────
+        _prog_interval = max(1, num_pages // 50)
+        _safe_progress = (lambda p, t, s: None) if progress is None else (
+            lambda p, t, s: progress(p, t, s) if p % _prog_interval == 0 or p == t else None
+        )
+        use_parallel = parallel and num_pages > 4
+        if use_parallel:
+            page_results = _parallel_extract(doc, path, num_pages, body_size, use_ocr, ocr_engine, _safe_progress)
+        else:
+            page_results = _sequential_extract(doc, num_pages, body_size, use_ocr, ocr_engine, _safe_progress)
+    
+        # ── column reordering ─────────────────────────────────────────
+        all_blocks: list[dict] = []
+        all_headings: list[dict] = []
+        pages_text: list[str] = []
+        scanned_pages: list[int] = []
+    
+        for pr in page_results:
+            pr["blocks"] = _reorder_columns(pr["blocks"])
+            all_blocks.extend(pr["blocks"])
+            all_headings.extend(pr["headings"])
+            pages_text.append(pr["text"])
+            if pr.get("scanned"):
+                scanned_pages.append(pr["page"])
+    
+        # ── layout analysis on blocks ──────────────────────────────────
+        col_boundaries: list[float] | None = None
+        layout_info: LayoutInfo | None = None
+        try:
+            layout_info = analyze_blocks(all_blocks, num_pages)
+            if layout_info.has_multi_column and layout_info.columns:
+                col_boundaries = [c.x for c in layout_info.columns]
+                all_blocks = _reorder_columns(all_blocks, col_boundaries)
+        except Exception:
+            pass
+    
+        # ── semantic classification (builtin) ──────────────────────────
+        classified_count = 0
+        for b in all_blocks:
+            if b.get("type") == "text":
+                b["layout_type"] = "heading" if b.get("is_heading") else "paragraph"
+                b["is_noise"] = False
+                classified_count += 1
+    
+        # ── header/footer cleanup ──────────────────────────────────────
+        try:
+            all_blocks = filter_noise_blocks(all_blocks, classified=None)
+        except Exception:
+            with contextlib.suppress(Exception):
+                all_blocks = strip_headers_footers_from_blocks(all_blocks, num_pages)
+    
+        # rebuild pages_text from cleaned blocks to keep sync
+        try:
+            cleaned_pages_text: list[str] = []
+            for p in range(num_pages):
+                page_lines: list[str] = []
+                for b in all_blocks:
+                    if b.get("type") == "text" and b.get("page") == p:
+                        page_lines.append(b["text"])
+                cleaned_pages_text.append("\n".join(page_lines))
+            pages_text = cleaned_pages_text
+        except Exception:
+            pass
+    
+        all_text = "\n".join(pages_text)
+        all_text = strip_headers_footers(all_text, pages_text)
+        all_text = _repair_hyphenation(all_text)
+        all_text = _merge_justified_orphans(all_text)
+    
+        # ── tables (Camelot + pdfplumber fallback) ─────────────────────
+        if progress:
+            progress(num_pages, num_pages, "tables")
+    
+        tables: list[str] = []
+        camelot_tables = []
+        try:
+            if is_camelot_available():
+                camelot_tables = extract_tables_advanced(path)
+        except Exception:
+            pass
+    
+        if camelot_tables:
+            for ct in camelot_tables:
+                tables.append(ct.markdown)
+                all_blocks.append({
+                    "type": "table",
+                    "page": ct.page,
+                    "markdown": ct.markdown,
+                    "csv": ct.csv,
+                    "bbox": ct.bbox,
+                    "accuracy": ct.accuracy,
+                    "method": ct.method,
+                })
+        else:
+            try:
+                with pdfplumber.open(path) as pdf:
+                    for i, page in enumerate(pdf.pages):
+                        if progress:
+                            progress(i + 1, num_pages, "tables")
+                        extracted = page.extract_tables()
+                        for table in extracted:
+                            rows: list[str] = []
+                            for row in table:
+                                cells = [str(c or "") for c in row]
+                                rows.append("| " + " | ".join(cells) + " |")
+                            if rows:
+                                md = "\n".join(rows)
+                                tables.append(md)
+                                all_blocks.append({
+                                    "type": "table",
+                                    "page": i,
+                                    "markdown": md,
+                                    "bbox": (0, 0, 0, 0),
+                                })
+            except Exception:
+                pass
+    
+        # ── images ────────────────────────────────────────────────────
+        images: list[dict] = []
+        if extract_images:
+            if progress:
+                progress(0, 1, "images")
+            img_count = 0
+            for page_num in range(num_pages):
+                page = doc[page_num]
+                for img in page.get_images(full=True):
+                    if img_count >= 20:
+                        break
+                    xref = img[0]
+                    try:
+                        base = doc.extract_image(xref)
+                        if base["width"] * base["height"] < 2_000_000:
+                            import base64 as b64
+                            b64_str = b64.b64encode(base["image"]).decode()
+                            images.append({
+                                "data": b64_str,
+                                "format": base.get("ext", "png"),
+                                "width": base["width"],
+                                "height": base["height"],
+                                "page": page_num,
+                            })
+                            img_count += 1
+                    except Exception:
+                        pass
+                if img_count >= 20:
+                    break
+    
+        # ── annotations & links ──────────────────────────────────────
+        annotations: list[dict] = []
+        links: list[dict] = []
+        for page_num in range(num_pages):
+            page = doc[page_num]
+            for annot in page.annots() or []:
+                annot_type = _ANNOT_TYPES.get(annot.type[0], "unknown")
+                annot_info = {
+                    "page": page_num,
+                    "type": annot_type,
+                    "content": annot.info.get("content", ""),
+                    "bbox": list(annot.rect) if annot.rect else None,
+                }
+                if annot_type == "link" or annot_type == "text":
+                    uri = annot.info.get("uri", "")
+                    if uri:
+                        annot_info["uri"] = uri
+                annotations.append(annot_info)
+    
+            for link in page.get_links() or []:
+                links.append({
+                    "page": page_num,
+                    "uri": link.get("uri", ""),
+                    "bbox": list(link.get("from", (0, 0, 0, 0))),
+                })
+    
+        doc.close()
+    
+        # ── build result ──────────────────────────────────────────────
+        if layout_info is not None:
+            metadata["layout"] = {
+                "has_multi_column": layout_info.has_multi_column,
+                "columns": [{"x": c.x, "width": c.width} for c in layout_info.columns],
+                "has_header": layout_info.header_rect is not None,
+                "has_footer": layout_info.footer_rect is not None,
             }
-            if annot_type == "link" or annot_type == "text":
-                uri = annot.info.get("uri", "")
-                if uri:
-                    annot_info["uri"] = uri
-            annotations.append(annot_info)
-
-        for link in page.get_links() or []:
-            links.append({
-                "page": page_num,
-                "uri": link.get("uri", ""),
-                "bbox": list(link.get("from", (0, 0, 0, 0))),
-            })
-
-    doc.close()
-
-    # ── build result ──────────────────────────────────────────────
-    if layout_info is not None:
-        metadata["layout"] = {
-            "has_multi_column": layout_info.has_multi_column,
-            "columns": [{"x": c.x, "width": c.width} for c in layout_info.columns],
-            "has_header": layout_info.header_rect is not None,
-            "has_footer": layout_info.footer_rect is not None,
+        result = {
+            "text": all_text.strip(),
+            "blocks": all_blocks,
+            "headings": all_headings,
+            "pages_text": pages_text,
+            "tables": tables,
+            "images": images,
+            "metadata": metadata,
+            "num_pages": num_pages,
+            "scanned_pages": scanned_pages,
+            "classified_count": classified_count,
+            "annotations": annotations,
+            "links": links,
         }
-    result = {
-        "text": all_text.strip(),
-        "blocks": all_blocks,
-        "headings": all_headings,
-        "pages_text": pages_text,
-        "tables": tables,
-        "images": images,
-        "metadata": metadata,
-        "num_pages": num_pages,
-        "scanned_pages": scanned_pages,
-        "classified_count": classified_count,
-        "annotations": annotations,
-        "links": links,
-    }
-
-    result["quality"] = score_extraction(result)
-
-    if progress:
-        progress(num_pages, num_pages, "done")
-
-    return result
-
+    
+        result["quality"] = score_extraction(result)
+    
+        if progress:
+            progress(num_pages, num_pages, "done")
+    
+        return result
+    
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
 
 # ── page processing ──────────────────────────────────────────────
 
@@ -490,16 +496,30 @@ def _parallel_extract(
 ) -> list[dict]:
     results: dict[int, dict] = {}
     workers = max(2, min(4, num_pages // 20))
+
+    def _worker(pages: list[int]) -> dict[int, dict]:
+        wdoc = fitz.open(path)
+        try:
+            return {
+                pn: _process_single_page(wdoc, pn, body_size, use_ocr, ocr_engine)
+                for pn in pages
+            }
+        finally:
+            wdoc.close()
+
+    page_batches = [
+        list(range(pn, min(pn + num_pages // workers + 1, num_pages)))
+        for pn in range(0, num_pages, num_pages // workers + 1)
+    ]
+
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            pool.submit(_process_single_page, doc, pn, body_size, use_ocr, ocr_engine): pn
-            for pn in range(num_pages)
-        }
+        futures = {pool.submit(_worker, batch): batch for batch in page_batches if batch}
         for future in as_completed(futures):
-            pn = futures[future]
-            results[pn] = future.result()
+            batch_results = future.result()
+            results.update(batch_results)
             if progress:
-                progress(pn + 1, num_pages, "extracting")
+                for pn in batch_results:
+                    progress(pn + 1, num_pages, "extracting")
 
     return [results[pn] for pn in range(num_pages)]
 
