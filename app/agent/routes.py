@@ -14,6 +14,7 @@ from app.agent.llm import create_provider
 from app.agent.store import (
     PersistentVectorStore,
     add_message,
+    cleanup_old_sessions,
     create_session,
     get_history,
     get_session,
@@ -219,6 +220,12 @@ async def agent_extract(schema_json: str = Form("{}")):
     schema = json.loads(schema_json) if schema_json else None
     result = await agent.extract(store_text, schema=schema)
     return result
+
+
+@agent_router.post("/agent/sessions/cleanup")
+async def agent_cleanup_sessions(max_age_days: int = 7):
+    deleted = cleanup_old_sessions(max_age_days=max_age_days)
+    return {"deleted_sessions": deleted}
 
 
 @agent_router.get("/agent/status")

@@ -215,3 +215,20 @@ def list_sessions(limit: int = 10) -> list[dict]:
         (limit,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def cleanup_old_sessions(max_age_days: int = 7) -> int:
+    """Remove sessions and their messages older than max_age_days."""
+    conn = _get_conn()
+    deleted = conn.execute(
+        """DELETE FROM agent_messages WHERE session_id IN
+           (SELECT id FROM agent_sessions
+            WHERE updated_at < datetime('now', ? || ' days'))""",
+        (f"-{max_age_days}",),
+    ).rowcount
+    deleted_sessions = conn.execute(
+        "DELETE FROM agent_sessions WHERE updated_at < datetime('now', ? || ' days')",
+        (f"-{max_age_days}",),
+    ).rowcount
+    conn.commit()
+    return deleted_sessions
