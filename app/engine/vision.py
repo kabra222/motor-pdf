@@ -14,10 +14,13 @@ USER_PROMPT = (
     "Se a imagem for muito pequena ou parecer um ícone decorativo, informe isso."
 )
 
-VISION_MODEL = os.getenv(
-    "OPENROUTER_VISION_MODEL",
+_FALLBACK_MODELS = [
+    os.getenv("OPENROUTER_VISION_MODEL"),
     "qwen/qwen-2-vl-72b-instruct:free",
-)
+    "meta-llama/llama-3.2-11b-vision-instruct:free",
+    "mistralai/pixtral-12b:free",
+    "openrouter/free",
+]
 
 
 def describe_image(
@@ -41,22 +44,37 @@ def describe_image(
         mime = f"image/{image_format}"
         data_uri = f"data:{mime};base64,{image_data}"
 
-        response = client.chat.completions.create(
-            model=model or VISION_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": USER_PROMPT},
-                        {"type": "image_url", "image_url": {"url": data_uri}},
+        models_to_try: list[str] = []
+        if model:
+            models_to_try.append(model)
+        models_to_try.extend(m for m in _FALLBACK_MODELS if m and m != model)
+
+        last_error = ""
+        for m in models_to_try:
+            try:
+                response = client.chat.completions.create(
+                    model=m,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": USER_PROMPT},
+                                {"type": "image_url", "image_url": {"url": data_uri}},
+                            ],
+                        },
                     ],
-                },
-            ],
-            max_tokens=300,
-            temperature=0.3,
-        )
-        return response.choices[0].message.content or ""
+                    max_tokens=300,
+                    temperature=0.3,
+                )
+                content = response.choices[0].message.content or ""
+                if content:
+                    return content
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+        return f"[Erro: todos os modelos falharam — último erro: {last_error}]"
     except Exception as e:
         return f"[Erro: {e}]"
 
