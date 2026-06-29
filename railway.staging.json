@@ -1,0 +1,21 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "pip install -e \".[openai,anthropic,advanced,sentry]\""
+  },
+  "deploy": {
+    "numReplicas": 1,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3,
+    "healthcheckPath": "/api/v1/health",
+    "healthcheckTimeout": 10,
+    "healthcheckInterval": 60
+  },
+  "env": {
+    "RAILWAY_ENVIRONMENT": "staging",
+    "MOTOR_PDF_RATE_LIMIT": "120",
+    "MOTOR_PDF_MAX_FILE_SIZE": "20971520",
+    "LOG_LEVEL": "debug"
+  }
+}

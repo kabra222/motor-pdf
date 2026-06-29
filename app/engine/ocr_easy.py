@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 HAS_EASYOCR = False
 try:
     import easyocr
@@ -40,8 +38,9 @@ class EasyOCREngine:
 
         try:
             try:
-                from PIL import Image
                 import io
+
+                from PIL import Image
                 if hasattr(page_or_image, "get_pixmap"):
                     pix = page_or_image.get_pixmap(dpi=dpi)
                     img_data = pix.tobytes("png")
@@ -58,7 +57,7 @@ class EasyOCREngine:
                 height_ths=0.7,
             )
             lines: list[str] = []
-            for bbox, text, conf in results:
+            for _bbox, text, conf in results:
                 if conf > 0.3:
                     lines.append(text.strip())
             return "\n".join(lines)
@@ -72,8 +71,9 @@ class EasyOCREngine:
             return {}
 
         try:
-            from PIL import Image
             import io
+
+            from PIL import Image
         except ImportError:
             return {}
 

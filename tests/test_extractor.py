@@ -1,6 +1,6 @@
+from app.engine.classifier import classify_blocks_builtin, filter_noise_blocks
 from app.engine.extractor import extract_text
 from app.engine.layout import analyze_blocks
-from app.engine.classifier import classify_blocks_builtin, filter_noise_blocks
 from app.engine.segmenter import segment_bcpd
 
 

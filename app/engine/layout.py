@@ -4,7 +4,6 @@ import statistics
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -31,9 +30,7 @@ class LayoutInfo:
     header_rect: tuple[float, float, float, float] | None = None
     footer_rect: tuple[float, float, float, float] | None = None
     has_multi_column: bool = False
-
-
-# ── Blocks analysis for columns, headers/footers ────────────
+    column_count: int = 1
 
 
 def analyze_blocks(blocks: list[dict], num_pages: int) -> LayoutInfo:
@@ -94,7 +91,6 @@ def analyze_blocks(blocks: list[dict], num_pages: int) -> LayoutInfo:
         major_cols = [x for x, c in counts.most_common(3) if c > max(5, len(all_centers) * 0.05)]
         major_cols.sort()
 
-        gap = page_width / 2
         col_groups: list[list[float]] = [[]]
         for col in major_cols:
             if col_groups[-1] and col - col_groups[-1][0] > page_width * 0.3:
@@ -107,9 +103,66 @@ def analyze_blocks(blocks: list[dict], num_pages: int) -> LayoutInfo:
 
         if len(col_groups) >= 2:
             info.has_multi_column = True
+            info.column_count = len(col_groups)
             for group in col_groups:
                 mid = statistics.median(group) if len(group) > 1 else group[0]
                 info.columns.append(ColumnBoundary(x=mid, page=-1))
+
+    return info
+
+
+def detect_multicolumn_projection(
+    blocks: list[dict], num_pages: int, page_width: float = 612, page_height: float = 792
+) -> LayoutInfo:
+    info = LayoutInfo()
+
+    page_text_blocks: dict[int, list[dict]] = {}
+    for b in blocks:
+        if b.get("type") != "text":
+            continue
+        p = b.get("page", 0)
+        page_text_blocks.setdefault(p, []).append(b)
+
+    column_breaks: list[int] = []
+    for _page_num, page_blocks in page_text_blocks.items():
+        left_edges = [b["bbox"][0] for b in page_blocks if b.get("bbox")]
+        right_edges = [b["bbox"][2] for b in page_blocks if b.get("bbox")]
+        if len(left_edges) < 4:
+            continue
+
+        bins_left: Counter[int] = Counter(round(x / 10) * 10 for x in left_edges)
+        bins_right: Counter[int] = Counter(round(x / 10) * 10 for x in right_edges)
+
+        content_zone_start = page_width * 0.08
+        content_zone_end = page_width * 0.92
+        significant = {x for x, c in bins_left.most_common(6) if c >= 2}
+        significant_right = {x for x, c in bins_right.most_common(6) if c >= 2}
+
+        left_columns = sorted(
+            [x for x in significant if content_zone_start <= x <= content_zone_end]
+        )
+        sorted(
+            [x for x in significant_right if content_zone_start <= x <= content_zone_end]
+        )
+
+        gaps = []
+        for i in range(len(left_columns) - 1):
+            gap = left_columns[i + 1] - left_columns[i]
+            gaps.append((gap, left_columns[i], left_columns[i + 1]))
+
+        large_gaps = [g for g in gaps if g[0] > page_width * 0.12]
+        for _gap_width, g_left, g_right in large_gaps:
+            mid = (g_left + g_right) / 2
+            if page_width * 0.25 < mid < page_width * 0.75:
+                column_breaks.append(round(mid))
+
+    if not column_breaks:
+        return info
+
+    median_break = statistics.median(column_breaks)
+    info.has_multi_column = True
+    info.column_count = 2
+    info.columns.append(ColumnBoundary(x=median_break, page=-1))
 
     return info
 
@@ -212,15 +265,12 @@ def _detect_hf_from_text(
     return headers, footers
 
 
-# ── Image-based column detection (optional) ─────────────────
-
-
 def detect_columns_via_projection(
     path: str | Path, page_num: int = 0, dpi: int = 100
 ) -> list[ColumnBoundary]:
     try:
-        from PIL import Image
         from pdf2image import convert_from_path
+        from PIL import Image
     except ImportError:
         return []
 
@@ -264,15 +314,9 @@ def detect_columns_via_projection(
         return []
 
 
-# ── Table overlap filtering ────────────────────────────────
-
-
 def is_inside_table(bbox: tuple[float, ...], tables: list[TableRegion]) -> bool:
     if not tables:
         return False
     cx = (bbox[0] + bbox[2]) / 2
     cy = (bbox[1] + bbox[3]) / 2
-    for t in tables:
-        if t.x0 <= cx <= t.x1 and t.y0 <= cy <= t.y1:
-            return True
-    return False
+    return any(t.x0 <= cx <= t.x1 and t.y0 <= cy <= t.y1 for t in tables)

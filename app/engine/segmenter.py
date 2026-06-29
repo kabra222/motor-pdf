@@ -1,37 +1,39 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-try:
-    import numpy as np
-    import ruptures as rpt
+import numpy as np
 
+from app.engine.constituency_guardrail import ConstituencyGuardrail
+from app.engine.coreference import CoreferenceTracker
+from app.engine.simcse_loss import compute_simcse_embeddings, estimate_anisotropy, info_nce_loss
+from app.engine.wasserstein_cost import WassersteinTopologicalCost
+
+logger = logging.getLogger(__name__)
+
+HAS_RUPTURES = False
+try:
+    import ruptures as rpt
     HAS_RUPTURES = True
 except ImportError:
-    HAS_RUPTURES = False
+    pass
 
+HAS_POT = False
 try:
     import ot
-
     HAS_POT = True
 except ImportError:
-    HAS_POT = False
+    pass
 
-try:
-    import numpy as np
-
-    HAS_NUMPY = True
-except ImportError:
-    HAS_NUMPY = False
-
+HAS_SENTENCE_TRANSFORMERS = False
 try:
     from sentence_transformers import SentenceTransformer
-
     HAS_SENTENCE_TRANSFORMERS = True
 except ImportError:
-    HAS_SENTENCE_TRANSFORMERS = False
+    pass
 
 
 @dataclass
@@ -40,14 +42,18 @@ class Segment:
     start_char: int
     end_char: int
     depth: int = 0
-    heading: Optional[str] = None
+    heading: str | None = None
     page: int = 0
+    confidence: float = 1.0
+    class_: str = "paragraph"
 
 
 @dataclass
 class SegmentationResult:
     segments: list[Segment] = field(default_factory=list)
     method: str = "heading"
+    anisotropy: dict | None = None
+    coreference_density: float = 0.0
 
 
 _LEGAL_TERMS = {
@@ -60,13 +66,11 @@ _LEGAL_TERMS = {
 }
 
 
-def _compute_embedding_features(
-    units: list[str],
-) -> np.ndarray | None:
+def _compute_embedding_features(units: list[str]) -> np.ndarray | None:
     if not HAS_SENTENCE_TRANSFORMERS or len(units) < 3:
         return None
     try:
-        model = SentenceTransformer("all-MiniLM-L6-v2")
+        model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
         embs = model.encode(units, show_progress_bar=False)
         if len(embs) < 3:
             return None
@@ -75,25 +79,19 @@ def _compute_embedding_features(
         return None
 
 
-def _extract_sentence_features(
-    text: str, blocks: list[dict] | None = None
-) -> tuple[list[str], np.ndarray | None]:
+def _extract_sentence_features(text: str, blocks: list[dict] | None = None) -> tuple[list[str], np.ndarray | None]:
     lines = text.split("\n")
     units: list[str] = []
     for line in lines:
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.startswith("##") or stripped.startswith("#"):
-            units.append(stripped)
-        elif len(stripped) > 20:
+        if stripped.startswith("##") or stripped.startswith("#") or len(stripped) > 20:
             units.append(stripped)
     if not units:
         units = [l.strip() for l in lines if len(l.strip()) > 20]
     if not units:
         return [], None
-    if not HAS_NUMPY:
-        return units, None
 
     feat = np.zeros((len(units), 80), dtype=np.float32)
     for i, unit in enumerate(units):
@@ -110,48 +108,11 @@ def _extract_sentence_features(
         feat[i, 7] = min(total, 100) / 100.0
         feat[i, 8] = sum(1 for c in unit if c in ".,;:!?") / max(len(unit), 1)
         feat[i, 9] = 1.0 if re.match(r"^[\d.]+[\s]", unit) else 0.0
-        for j, w in enumerate(words[:25]):
+        for _j, w in enumerate(words[:25]):
             h = hash(w) % 68
             feat[i, 12 + h] += 1.0
 
     return units, feat
-
-
-if HAS_RUPTURES and HAS_POT:
-
-    class WassersteinTopologicalCost(rpt.base.BaseCost):
-        model = "custom_wasserstein_1d"
-        min_size = 3
-
-        def __init__(self):
-            self.signal = None
-            self.n_samples = None
-
-        def fit(self, signal):
-            self.signal = signal
-            self.n_samples = signal.shape[0]
-            return self
-
-        def error(self, start, end):
-            if end - start < self.min_size * 2:
-                return 0.0
-            sub = self.signal[start:end]
-            mid = len(sub) // 2
-            mag_p = np.linalg.norm(sub[:mid], axis=1)
-            mag_q = np.linalg.norm(sub[mid:], axis=1)
-            sp = np.sum(mag_p)
-            sq = np.sum(mag_q)
-            p_dist = mag_p / sp if sp != 0 else mag_p
-            q_dist = mag_q / sq if sq != 0 else mag_q
-            cp = np.arange(len(p_dist), dtype=np.float64)
-            cq = np.arange(len(q_dist), dtype=np.float64)
-            w1 = ot.wasserstein_1d(cp, cq, p_dist, q_dist, p=1)
-            return float(w1 * (end - start))
-
-else:
-
-    class WassersteinTopologicalCost:
-        pass
 
 
 def segment_bcpd(
@@ -172,29 +133,39 @@ def segment_bcpd(
     if n < 5:
         return SegmentationResult(segments=[], method="bcpd_too_short")
 
-    embed_feat: np.ndarray | None = None
-    embed_method: str = ""
+    anisotropy = None
+    embed_method = ""
+
     if use_embeddings:
-        embed_feat = _compute_embedding_features(sentences)
-        if embed_feat is not None and embed_feat.shape[0] == n:
-            embed_feat = (embed_feat - embed_feat.mean(axis=0)) / (
-                embed_feat.std(axis=0) + 1e-8
-            )
-            feat = np.concatenate([feat, embed_feat], axis=1)
+        simcse_embs = compute_simcse_embeddings(sentences, dropout_mask=0.1)
+        if simcse_embs is not None and simcse_embs.shape[0] >= n:
+            aligned = simcse_embs[:n]
+            aligned = (aligned - aligned.mean(axis=0)) / (aligned.std(axis=0) + 1e-8)
+            feat = np.concatenate([feat, aligned], axis=1)
+            anisotropy = estimate_anisotropy(aligned)
+            info_nce = info_nce_loss(aligned, temperature=0.05)
+            if anisotropy and info_nce > 0:
+                anisotropy["info_nce_loss"] = round(info_nce, 4)
             embed_method = "_simcse"
 
-    if HAS_POT:
-        custom = WassersteinTopologicalCost()
-        algo = rpt.Pelt(custom_cost=custom, min_size=5, jump=1).fit(feat)
+    use_wasserstein = WassersteinTopologicalCost.is_available()
+    if use_wasserstein:
+        custom = WassersteinTopologicalCost.create()
+        if custom is not None:
+            algo = rpt.Pelt(custom_cost=custom, min_size=5, jump=1).fit(feat)
+        else:
+            algo = rpt.Pelt(model="l2", min_size=5, jump=1).fit(feat)
     else:
         algo = rpt.Pelt(model="l2", min_size=5, jump=1).fit(feat)
+
     pen = penalty or n * 0.02
     bkps = algo.predict(pen=pen)
     n_bkps = len(bkps)
+
     if n_bkps > max_segments:
         pen *= 2
         bkps = algo.predict(pen=pen)
-    elif n_bkps < 3:
+    elif n_bkps < 3 and penalty is None:
         pen *= 0.3
         bkps = algo.predict(pen=pen)
 
@@ -209,21 +180,6 @@ def segment_bcpd(
         if not seg_text.strip():
             continue
         seg_len = len(seg_text)
-        from app.engine.chunker import _count_tokens
-
-        tok = _count_tokens(seg_text)
-        if tok < 10 and i > 0:
-            prev = segments[-1]
-            segments[-1] = Segment(
-                text=prev.text + "\n" + seg_text,
-                start_char=prev.start_char,
-                end_char=char_pos + seg_len,
-                depth=prev.depth,
-                heading=prev.heading,
-                page=prev.page,
-            )
-            char_pos += seg_len
-            continue
 
         depth = _infer_depth(seg_text, blocks)
         heading = _infer_heading(seg_text)
@@ -235,17 +191,96 @@ def segment_bcpd(
                 depth=depth,
                 heading=heading,
                 page=0,
+                confidence=_estimate_confidence(boundaries, i, n, feat),
             )
         )
         char_pos += seg_len
 
-    base = "bcpd_pelt_wasserstein" if HAS_POT else "bcpd_pelt"
-    return SegmentationResult(segments=segments, method=base + embed_method)
+    segments = _apply_constituency_guardrail(segments, text)
+    segments = _apply_coreference_guardrail(segments)
+
+    base = "bcpd_pelt_wasserstein" if use_wasserstein else "bcpd_pelt"
+    return SegmentationResult(
+        segments=segments,
+        method=base + embed_method,
+        anisotropy=anisotropy,
+    )
 
 
-def segment_headings(
-    text: str, blocks: list[dict] | None = None
-) -> SegmentationResult:
+def _estimate_confidence(
+    boundaries: list[int], idx: int, n: int, feat: np.ndarray
+) -> float:
+    if idx <= 0 or idx >= len(boundaries) - 2:
+        return 1.0
+    start = boundaries[idx]
+    end = boundaries[idx + 1]
+    if start < 0 or end > n or end - start < 1:
+        return 1.0
+    try:
+        if start < feat.shape[0] - 1 and end < feat.shape[0]:
+            sub = feat[start:end]
+            if sub.shape[0] >= 2:
+                var = float(np.mean(np.var(sub, axis=0)))
+                return min(1.0, max(0.1, 1.0 / (1.0 + var)))
+    except Exception:
+        pass
+    return 0.8
+
+
+def _apply_constituency_guardrail(
+    segments: list[Segment], text: str
+) -> list[Segment]:
+    if not segments:
+        return segments
+    guardrail = ConstituencyGuardrail()
+    if not guardrail.is_available:
+        return segments
+    merged = []
+    for seg in segments:
+        if not merged:
+            merged.append(seg)
+            continue
+        prev = merged[-1]
+        proposed = prev.end_char
+        if not guardrail.is_safe_break(text, proposed):
+            prev.text = prev.text.rstrip() + "\n\n" + seg.text
+            prev.end_char = seg.end_char
+            if seg.depth > prev.depth:
+                prev.depth = seg.depth
+            if seg.heading and not prev.heading:
+                prev.heading = seg.heading
+            continue
+        merged.append(seg)
+    return merged
+
+
+def _apply_coreference_guardrail(segments: list[Segment]) -> list[Segment]:
+    if not segments:
+        return segments
+    tracker = CoreferenceTracker()
+    texts = [s.text for s in segments]
+    orphan_risk = tracker.detect_orphan_risk(texts)
+    if not orphan_risk:
+        return segments
+    merged = []
+    for i, seg in enumerate(segments):
+        if not merged:
+            merged.append(seg)
+            continue
+        if i in orphan_risk:
+            prev = merged[-1]
+            prev.text = prev.text.rstrip() + "\n\n" + seg.text
+            prev.end_char = seg.end_char
+            if seg.depth > prev.depth:
+                prev.depth = seg.depth
+            if seg.heading and not prev.heading:
+                prev.heading = seg.heading
+        else:
+            merged.append(seg)
+    return merged
+
+
+def segment_headings(text: str, blocks: list[dict] | None = None) -> SegmentationResult:
     segments = []
     if not blocks:
         return SegmentationResult(segments=[], method="heading_empty")
@@ -298,6 +333,7 @@ def segment_headings(
         )
         char_pos += len(sec_text)
 
+    segments = _apply_coreference_guardrail(segments)
     return SegmentationResult(segments=segments, method="heading")
 
 
@@ -309,16 +345,43 @@ def segment_hybrid(
 ) -> SegmentationResult:
     heading_result = segment_headings(text, blocks)
     if heading_result.segments:
-        heading_result.segments = apply_guardrail(heading_result.segments, text)
+        heading_result.segments = _apply_merge_guardrail(heading_result.segments, text)
         return heading_result
 
     if HAS_RUPTURES:
         bcpd_result = segment_bcpd(text, blocks, use_embeddings=use_embeddings)
         if bcpd_result.segments:
-            bcpd_result.segments = apply_guardrail(bcpd_result.segments, text)
+            bcpd_result.segments = _apply_merge_guardrail(bcpd_result.segments, text)
             return bcpd_result
 
     return SegmentationResult(segments=[], method="none")
+
+
+def _apply_merge_guardrail(segments: list[Segment], text: str) -> list[Segment]:
+    segments = _apply_constituency_guardrail(segments, text)
+    segments = _apply_coreference_guardrail(segments)
+    return _apply_min_size_guardrail(segments)
+
+
+def _apply_min_size_guardrail(segments: list[Segment]) -> list[Segment]:
+    if not segments:
+        return segments
+    merged = []
+    for seg in segments:
+        if not merged:
+            merged.append(seg)
+            continue
+        prev = merged[-1]
+        if len(seg.text.split()) < 10 and len(prev.text.split()) > 30:
+            prev.text = prev.text.rstrip() + "\n\n" + seg.text
+            prev.end_char = seg.end_char
+            if seg.depth > prev.depth:
+                prev.depth = seg.depth
+            if seg.heading and not prev.heading:
+                prev.heading = seg.heading
+        else:
+            merged.append(seg)
+    return merged
 
 
 def _infer_depth(seg_text: str, blocks: list[dict] | None = None) -> int:
@@ -348,7 +411,7 @@ def _infer_depth(seg_text: str, blocks: list[dict] | None = None) -> int:
     return 0
 
 
-def _infer_heading(seg_text: str) -> Optional[str]:
+def _infer_heading(seg_text: str) -> str | None:
     lines = [l.strip() for l in seg_text.split("\n") if l.strip()]
     if not lines:
         return None
@@ -359,75 +422,3 @@ def _infer_heading(seg_text: str) -> Optional[str]:
     if len(first) < 120 and not first.endswith("."):
         return first
     return None
-
-
-_SENTENCE_END = re.compile(r"[.!?][\"']?\s*$")
-
-_ANAPHORA_PATTERNS = re.compile(
-    r"^\s*(O|A|Os|As|Este|Esta|Estes|Estas|Esse|Essa|Esses|Essas|"
-    r"Aquele|Aquela|Aqueles|Aquelas|Seu|Sua|Seus|Suas|Lhe|Lhes|"
-    r"O referido|A referida|O mencionado|A mencionada|O citado|A citada|"
-    r"Tal|Tais|Mesmo|Mesma|Mesmos|Mesmas|"
-    r"O presente|A presente|O sobredito|A sobredita)\b",
-    re.IGNORECASE,
-)
-
-_SHORT_CONJUNCTIONS = re.compile(
-    r"^\s*(e|mas|porém|contudo|todavia|entretanto|no entanto|"
-    r"pois|portanto|logo|assim|desse modo|"
-    r"que|o qual|a qual|os quais|as quais|"
-    r"como|conforme|segundo|"
-    r"além disso|ademais|outrossim)\b",
-    re.IGNORECASE,
-)
-
-_MIN_GUARDRAIL_TOKENS = 30
-
-
-def _count_tokens_simple(text: str) -> int:
-    return len(text.split())
-
-
-def _check_orphan_start(segments: list[Segment], idx: int) -> bool:
-    if idx <= 0 or idx >= len(segments):
-        return False
-    cur = segments[idx].text.lstrip()
-    prev = segments[idx - 1].text
-    if _ANAPHORA_PATTERNS.match(cur) and _SENTENCE_END.search(prev) is None:
-        return True
-    if _SHORT_CONJUNCTIONS.match(cur) and _SENTENCE_END.search(prev) is None:
-        return True
-    return False
-
-
-def apply_guardrail(
-    segments: list[Segment], text: str
-) -> list[Segment]:
-    if not segments:
-        return segments
-    merged = []
-    for seg in segments:
-        if not merged:
-            merged.append(seg)
-            continue
-        prev = merged[-1]
-        cur_tok = _count_tokens_simple(seg.text)
-        prev_tok = _count_tokens_simple(prev.text)
-        if _check_orphan_start(merged, len(merged)):
-            prev.text = prev.text.rstrip() + "\n" + seg.text
-            prev.end_char = seg.end_char
-            if seg.depth > prev.depth:
-                prev.depth = seg.depth
-            if seg.heading and not prev.heading:
-                prev.heading = seg.heading
-            continue
-        if cur_tok < _MIN_GUARDRAIL_TOKENS and prev_tok > _MIN_GUARDRAIL_TOKENS * 3:
-            prev.text = prev.text.rstrip() + "\n" + seg.text
-            prev.end_char = seg.end_char
-            if seg.depth > prev.depth:
-                prev.depth = seg.depth
-            if seg.heading and not prev.heading:
-                prev.heading = seg.heading
-            continue
-        merged.append(seg)
-    return merged

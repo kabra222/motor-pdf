@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from app.models import Chunk
 
 try:
@@ -11,7 +9,7 @@ except ImportError:
     HAS_TIKTOKEN = False
 
 try:
-    from app.engine.segmenter import segment_hybrid, SegmentationResult, Segment
+    from app.engine.segmenter import Segment, SegmentationResult, segment_hybrid
     HAS_SEGMENTER = True
 except ImportError:
     HAS_SEGMENTER = False

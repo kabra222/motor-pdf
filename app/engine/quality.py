@@ -45,10 +45,7 @@ def score_extraction(result: dict) -> dict:
 
     chars = sum(len(b.get("text", "")) for b in blocks if b.get("type") == "text")
     expected_chars = num_pages * 2000
-    if expected_chars > 0:
-        coverage = min(1.0, chars / expected_chars)
-    else:
-        coverage = 1.0
+    coverage = min(1.0, chars / expected_chars) if expected_chars > 0 else 1.0
     if coverage > 0:
         coverage = max(0.1, coverage)
     dims.append((

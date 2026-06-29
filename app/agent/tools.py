@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-import math
-import os
-from typing import Optional
-
 from app.agent.llm import LLMProvider
 from app.agent.store import PersistentVectorStore
 
@@ -35,7 +31,7 @@ def rerank(
         return results[:top_k]
     pairs = [(query, r["text"]) for r in results]
     scores = ce.predict(pairs)
-    for r, s in zip(results, scores):
+    for r, s in zip(results, scores, strict=False):
         r["rerank_score"] = round(float(s), 4)
     results.sort(key=lambda x: x.get("rerank_score", x["score"]), reverse=True)
     return results[:top_k]
@@ -118,7 +114,7 @@ async def build_pdf_context(
     for r in results:
         meta = r.get("metadata", {})
         page = meta.get("page", "")
-        section = meta.get("section") or ""
+        meta.get("section") or ""
         heading = meta.get("heading") or ""
         loc = []
         if page is not None and page != "":
@@ -169,7 +165,8 @@ async def classify(text: str, llm: LLMProvider) -> dict:
         {"role": "system", "content": "Você classifica documentos profissionais."},
         {"role": "user", "content": prompt},
     ])
-    import json, re
+    import json
+    import re
     match = re.search(r"\{.*\}", result, re.DOTALL)
     if match:
         return json.loads(match.group())
@@ -181,7 +178,7 @@ async def classify(text: str, llm: LLMProvider) -> dict:
 async def extract_entities(
     text: str,
     llm: LLMProvider,
-    schema: Optional[dict] = None,
+    schema: dict | None = None,
 ) -> dict:
     import json
     if schema:
@@ -201,7 +198,8 @@ async def extract_entities(
         {"role": "system", "content": "Você extrai entidades estruturadas de documentos."},
         {"role": "user", "content": prompt},
     ])
-    import json, re
+    import json
+    import re
     match = re.search(r"\{.*\}", result, re.DOTALL)
     if match:
         try:

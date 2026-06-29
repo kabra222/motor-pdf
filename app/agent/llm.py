@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Optional
+from collections.abc import AsyncIterator
 
 
 class LLMProvider(ABC):
@@ -184,7 +184,6 @@ class OpenRouterProvider(OpenAIProvider):
         self.embed_model = os.getenv("OPENROUTER_EMBED_MODEL", "openai/text-embedding-3-small")
 
     async def embed(self, text: str) -> list[float]:
-        import openai
 
         try:
             resp = await self.client.embeddings.create(

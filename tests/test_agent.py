@@ -1,5 +1,4 @@
-import pytest
-from app.agent.store import PersistentVectorStore, create_session, add_message, get_history
+from app.agent.store import PersistentVectorStore, add_message, create_session, get_history
 
 
 def test_persistent_vector_store():

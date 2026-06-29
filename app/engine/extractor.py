@@ -1,33 +1,62 @@
 from __future__ import annotations
 
+import contextlib
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, Optional
 
 import fitz
 import pdfplumber
 
+from app.engine.classifier import (
+    filter_noise_blocks,
+)
 from app.engine.layout import (
     LayoutInfo,
     analyze_blocks,
     strip_headers_footers,
     strip_headers_footers_from_blocks,
-    is_inside_table,
 )
+from app.engine.ocr_easy import EasyOCREngine, is_easyocr_available
 from app.engine.quality import score_extraction
 from app.engine.tables import (
     extract_tables_hybrid as extract_tables_advanced,
+)
+from app.engine.tables import (
     is_camelot_available,
 )
-from app.engine.classifier import (
-    classify_pdf,
-    classify_blocks_builtin,
-    merge_with_blocks,
-    filter_noise_blocks,
-    is_unstructured_available,
-)
-from app.engine.ocr_easy import EasyOCREngine, is_easyocr_available
+
+_ANNOT_TYPES = {
+    0: "text",
+    1: "link",
+    2: "free_text",
+    3: "line",
+    4: "square",
+    5: "circle",
+    6: "polygon",
+    7: "poly_line",
+    8: "highlight",
+    9: "underline",
+    10: "squiggly",
+    11: "strikeout",
+    12: "stamp",
+    13: "caret",
+    14: "ink",
+    15: "file_attachment",
+    16: "sound",
+    17: "movie",
+    18: "widget",
+    19: "screen",
+    20: "printer_mark",
+    21: "trap_net",
+    22: "watermark",
+    23: "3d",
+    24: "redact",
+    25: "projection",
+    26: "rich_media",
+    27: "web_video",
+}
 
 _LIST_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^[-•–]\s"), "bullet"),
@@ -106,7 +135,6 @@ def extract_text(
     body_size = max(size_mass, key=size_mass.get) if size_mass else 12
 
     # ── page extraction ───────────────────────────────────────────
-    import math
     _prog_interval = max(1, num_pages // 50)
     _safe_progress = (lambda p, t, s: None) if progress is None else (
         lambda p, t, s: progress(p, t, s) if p % _prog_interval == 0 or p == t else None
@@ -154,10 +182,8 @@ def extract_text(
     try:
         all_blocks = filter_noise_blocks(all_blocks, classified=None)
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             all_blocks = strip_headers_footers_from_blocks(all_blocks, num_pages)
-        except Exception:
-            pass
 
     # rebuild pages_text from cleaned blocks to keep sync
     try:
@@ -255,6 +281,32 @@ def extract_text(
             if img_count >= 20:
                 break
 
+    # ── annotations & links ──────────────────────────────────────
+    annotations: list[dict] = []
+    links: list[dict] = []
+    for page_num in range(num_pages):
+        page = doc[page_num]
+        for annot in page.annots() or []:
+            annot_type = _ANNOT_TYPES.get(annot.type[0], "unknown")
+            annot_info = {
+                "page": page_num,
+                "type": annot_type,
+                "content": annot.info.get("content", ""),
+                "bbox": list(annot.rect) if annot.rect else None,
+            }
+            if annot_type == "link" or annot_type == "text":
+                uri = annot.info.get("uri", "")
+                if uri:
+                    annot_info["uri"] = uri
+            annotations.append(annot_info)
+
+        for link in page.get_links() or []:
+            links.append({
+                "page": page_num,
+                "uri": link.get("uri", ""),
+                "bbox": list(link.get("from", (0, 0, 0, 0))),
+            })
+
     doc.close()
 
     # ── build result ──────────────────────────────────────────────
@@ -276,6 +328,8 @@ def extract_text(
         "num_pages": num_pages,
         "scanned_pages": scanned_pages,
         "classified_count": classified_count,
+        "annotations": annotations,
+        "links": links,
     }
 
     result["quality"] = score_extraction(result)

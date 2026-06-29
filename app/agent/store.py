@@ -5,7 +5,6 @@ import math
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Optional
 
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 _DB_PATH = _DATA_DIR / "motor.db"
@@ -55,7 +54,7 @@ def _init_tables(conn: sqlite3.Connection) -> None:
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(x * x for x in b))
     return dot / (na * nb) if na and nb else 0.0
@@ -70,7 +69,7 @@ class PersistentVectorStore:
         id: str,
         text: str,
         embedding: list[float],
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ) -> None:
         meta = metadata or {}
         conn = _get_conn()
@@ -140,7 +139,7 @@ class PersistentVectorStore:
         ).fetchone()
         return row[0] if row else 0
 
-    def get_entry(self, id: str) -> Optional[dict]:
+    def get_entry(self, id: str) -> dict | None:
         conn = _get_conn()
         row = conn.execute(
             "SELECT * FROM agent_vectors WHERE id = ?",
@@ -174,7 +173,7 @@ def create_session() -> str:
     return session_id
 
 
-def get_session(session_id: str) -> Optional[dict]:
+def get_session(session_id: str) -> dict | None:
     conn = _get_conn()
     row = conn.execute(
         "SELECT * FROM agent_sessions WHERE id = ?", (session_id,)
@@ -220,7 +219,7 @@ def list_sessions(limit: int = 10) -> list[dict]:
 def cleanup_old_sessions(max_age_days: int = 7) -> int:
     """Remove sessions and their messages older than max_age_days."""
     conn = _get_conn()
-    deleted = conn.execute(
+    conn.execute(
         """DELETE FROM agent_messages WHERE session_id IN
            (SELECT id FROM agent_sessions
             WHERE updated_at < datetime('now', ? || ' days'))""",

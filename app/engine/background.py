@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from pathlib import Path
 
 from app.engine.chunker import chunk_text
 from app.engine.extractor import extract_text
 from app.engine.storage import (
-    create_job as storage_create_job,
-    get_job as storage_get_job,
-    update_job as storage_update_job,
     cleanup_stale_jobs as storage_cleanup,
+)
+from app.engine.storage import (
+    create_job as storage_create_job,
+)
+from app.engine.storage import (
+    get_job as storage_get_job,
+)
+from app.engine.storage import (
+    update_job as storage_update_job,
 )
 from app.models import ExtractionResult, JobStatus
 
@@ -57,7 +64,7 @@ async def start_processing(
     loop = asyncio.get_running_loop()
 
     def progress(page: int, total: int, stage: str) -> None:
-        try:
+        with contextlib.suppress(Exception):
             asyncio.run_coroutine_threadsafe(
                 _publish(job_id, "progress", {
                     "page": page,
@@ -66,16 +73,12 @@ async def start_processing(
                 }),
                 loop,
             )
-        except Exception:
-            pass
         if stage == "tables" or page % 5 == 0 or page == total:
-            try:
+            with contextlib.suppress(Exception):
                 asyncio.run_coroutine_threadsafe(
                     storage_update_job(job_id, progress=page, total=total),
                     loop,
                 )
-            except Exception:
-                pass
 
     try:
         result = await asyncio.to_thread(

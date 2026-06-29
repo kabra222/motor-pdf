@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import tempfile
 import time
 from collections import defaultdict
@@ -12,7 +13,6 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.engine.background import (
-    cleanup_job,
     create_job,
     get_job,
     get_job_events,
@@ -30,10 +30,12 @@ from app.models import (
     JobStatus,
 )
 
-router = APIRouter()
+router = APIRouter(
+    tags=["Extração"],
+)
 cache = PDFCache()
 
-MAX_FILE_SIZE = 50 * 1024 * 1024
+MAX_FILE_SIZE = int(os.getenv("MOTOR_PDF_MAX_FILE_SIZE", str(50 * 1024 * 1024)))
 MAX_PAGES = 500
 API_KEY = os.getenv("MOTOR_PDF_API_KEY", "")
 
@@ -58,9 +60,6 @@ async def verify_api_key(x_api_key: str = Header("")):
     return x_api_key
 
 
-# ── file validation ──────────────────────────────────────────────
-
-
 async def _validate_file(file: UploadFile) -> tuple[bytes, str]:
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Formato inválido — envie um arquivo PDF")
@@ -73,18 +72,28 @@ async def _validate_file(file: UploadFile) -> tuple[bytes, str]:
 # ── endpoints ────────────────────────────────────────────────────
 
 
-@router.post("/extract", response_model=ExtractionResult | ErrorResponse)
+@router.post(
+    "/extract",
+    response_model=ExtractionResult | ErrorResponse,
+    summary="Extrair texto de PDF",
+    description=(
+        "Extrai texto, tabelas, imagens e metadados de um PDF. "
+        "Suporta OCR (PaddleOCR ou EasyOCR), chunking semântico, "
+        "BCPD segmenter, descrição de imagens via LLM vision, "
+        "e classificação de blocos (heading/paragraph/noise)."
+    ),
+)
 async def extract(
-    file: UploadFile = File(...),
-    chunk_size: int = Form(default=2000, ge=100, le=32000),
-    chunk_overlap: int = Form(default=200, ge=0, le=4000),
-    use_ocr: str = Form(""),
-    password: str | None = Form(None),
-    format: FormatType = Form(FormatType.text),
-    model: str = Form("gpt-4"),
-    extract_images: bool = Form(False),
-    use_bcpd: bool = Form(False),
-    describe_images: bool = Form(False),
+    file: UploadFile = File(..., description="Arquivo PDF para processar"),
+    chunk_size: int = Form(default=2000, ge=100, le=32000, description="Tamanho alvo de cada chunk em caracteres"),
+    chunk_overlap: int = Form(default=200, ge=0, le=4000, description="Sobreposição entre chunks"),
+    use_ocr: str = Form("", description='OCR: "easyocr", "paddleocr" ou vazio para desligado'),
+    password: str | None = Form(None, description="Senha para PDF protegido"),
+    format: FormatType = Form(FormatType.text, description="Formato de saída (text/markdown/semantic_html)"),
+    model: str = Form("gpt-4", description="Modelo para tokenização (tiktoken)"),
+    extract_images: bool = Form(False, description="Extrair imagens do PDF"),
+    use_bcpd: bool = Form(False, description="Usar BCPD (Breakpoint Detection) para segmentação"),
+    describe_images: bool = Form(False, description="Descrever imagens via LLM vision (requer OPENROUTER_API_KEY)"),
     x_api_key: str = Depends(verify_api_key),
 ):
     _check_rate(x_api_key or "anonymous")
@@ -191,17 +200,26 @@ async def extract(
     return extraction
 
 
-@router.post("/documents", status_code=201)
+@router.post(
+    "/documents",
+    status_code=201,
+    summary="Enviar PDF para processamento assíncrono",
+    description=(
+        "Envia um PDF para processamento em background. "
+        "Retorna um job_id imediatamente. Acompanhe o progresso via GET /documents/{id} "
+        "ou via SSE em /documents/{id}/stream."
+    ),
+)
 async def create_document(
-    file: UploadFile = File(...),
-    chunk_size: int = Form(default=2000, ge=100, le=32000),
-    chunk_overlap: int = Form(default=200, ge=0, le=4000),
-    use_ocr: str = Form(""),
-    password: str | None = Form(None),
-    model: str = Form("gpt-4"),
-    extract_images: bool = Form(False),
-    use_bcpd: bool = Form(False),
-    describe_images: bool = Form(False),
+    file: UploadFile = File(..., description="Arquivo PDF para processar"),
+    chunk_size: int = Form(default=2000, ge=100, le=32000, description="Tamanho do chunk em caracteres"),
+    chunk_overlap: int = Form(default=200, ge=0, le=4000, description="Sobreposição entre chunks"),
+    use_ocr: str = Form("", description='OCR: "easyocr", "paddleocr" ou vazio'),
+    password: str | None = Form(None, description="Senha para PDF protegido"),
+    model: str = Form("gpt-4", description="Modelo para tokenização"),
+    extract_images: bool = Form(False, description="Extrair imagens"),
+    use_bcpd: bool = Form(False, description="Usar BCPD segmenter"),
+    describe_images: bool = Form(False, description="Descrever imagens via LLM"),
     x_api_key: str = Depends(verify_api_key),
 ):
     _check_rate(x_api_key or "anonymous")
@@ -236,7 +254,11 @@ async def create_document(
     return {"id": job_id, "status": "processing"}
 
 
-@router.get("/documents/{job_id}")
+@router.get(
+    "/documents/{job_id}",
+    summary="Obter resultado do job",
+    description="Retorna o resultado de um job de processamento assíncrono pelo seu ID.",
+)
 async def get_document(job_id: str):
     job = await get_job(job_id)
     if not job:
@@ -251,7 +273,14 @@ async def get_document(job_id: str):
     )
 
 
-@router.get("/documents/{job_id}/stream")
+@router.get(
+    "/documents/{job_id}/stream",
+    summary="SSE: acompanhar progresso do job",
+    description=(
+        "Streaming Server-Sent Events com o progresso do job. "
+        "Eventos: progress, complete, error. Timeout de 30s por evento."
+    ),
+)
 async def stream_document(job_id: str):
     job = await get_job(job_id)
     if not job:
@@ -268,7 +297,7 @@ async def stream_document(job_id: str):
                 yield f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
                 if event["event"] in ("complete", "error"):
                     break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield f"event: keepalive\ndata: {json.dumps({'ts': __import__('time').time()})}\n\n"
 
     return StreamingResponse(
@@ -282,11 +311,18 @@ async def stream_document(job_id: str):
     )
 
 
-@router.get("/documents/{job_id}/chunks")
+@router.get(
+    "/documents/{job_id}/chunks",
+    summary="Listar chunks de um job com paginação",
+    description=(
+        "Retorna os chunks extraídos de um job já processado, "
+        "com suporte a paginação via page e per_page."
+    ),
+)
 async def get_document_chunks(
     job_id: str,
-    page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=20, ge=1, le=100),
+    page: int = Query(default=1, ge=1, description="Número da página"),
+    per_page: int = Query(default=20, ge=1, le=100, description="Itens por página"),
 ):
     job = await get_job(job_id)
     if not job:
@@ -308,7 +344,11 @@ async def get_document_chunks(
     }
 
 
-@router.post("/extract/quality")
+@router.post(
+    "/extract/quality",
+    summary="Extrair apenas métricas de qualidade",
+    description="Processa um PDF rapidamente e retorna apenas as métricas de qualidade da extração.",
+)
 async def extract_quality(
     file: UploadFile = File(...),
     x_api_key: str = Depends(verify_api_key),
@@ -329,20 +369,32 @@ async def extract_quality(
     return result.get("quality", {})
 
 
-@router.get("/cache/stats")
+@router.get(
+    "/cache/stats",
+    summary="Estatísticas do cache",
+    description="Retorna o tamanho atual do cache de extrações.",
+)
 async def cache_stats():
     return {"size": await cache.size()}
 
 
-@router.delete("/cache")
+@router.delete(
+    "/cache",
+    summary="Limpar cache",
+    description="Remove todas as entradas do cache de extrações.",
+)
 async def clear_cache():
     await cache.clear()
     return {"status": "ok"}
 
 
-@router.get("/health")
+@router.get(
+    "/health",
+    summary="Health check",
+    description="Verifica o status do serviço, versão e configuração atual.",
+)
 async def health():
-    import subprocess
+    from app.main import VERSION
     deploy_version = "unknown"
     try:
         deploy_version = subprocess.run(
@@ -353,7 +405,7 @@ async def health():
         deploy_version = "no-git"
     return {
         "status": "ok",
-        "version": "0.4.0",
+        "version": VERSION,
         "deploy": deploy_version,
         "max_file_size_mb": MAX_FILE_SIZE >> 20,
         "max_pages": MAX_PAGES,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import AsyncIterator, Optional
+from collections.abc import AsyncIterator
 
 from app.agent.llm import LLMProvider
 from app.agent.tools import (
@@ -12,6 +12,7 @@ from app.agent.tools import (
     search,
     summarize,
 )
+
 from .store import (
     PersistentVectorStore,
     get_history,
@@ -22,7 +23,7 @@ class PDFAgent:
     def __init__(
         self,
         llm: LLMProvider,
-        store: Optional[PersistentVectorStore] = None,
+        store: PersistentVectorStore | None = None,
     ):
         self.llm = llm
         self.store = store or PersistentVectorStore()
@@ -181,7 +182,7 @@ class PDFAgent:
     async def classify(self, text: str) -> dict:
         return await classify(text, self.llm)
 
-    async def extract(self, text: str, schema: Optional[dict] = None) -> dict:
+    async def extract(self, text: str, schema: dict | None = None) -> dict:
         return await extract_entities(text, self.llm, schema)
 
     async def query(self, text: str, query: str) -> str:
@@ -206,7 +207,7 @@ class PDFAgent:
         embeddings: list[list[float]],
         metadata: list[dict] | None = None,
     ) -> None:
-        for i, (text, emb) in enumerate(zip(chunks, embeddings)):
+        for i, (text, emb) in enumerate(zip(chunks, embeddings, strict=False)):
             meta = metadata[i] if metadata else {"chunk_index": i}
             self.store.add(f"chunk_{i}", text, emb, meta)
 

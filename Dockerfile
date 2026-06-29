@@ -5,7 +5,7 @@ WORKDIR /app
 COPY app/ app/
 COPY pyproject.toml .
 
-RUN pip install --no-cache-dir PyMuPDF pdfplumber fastapi uvicorn pydantic python-multipart tiktoken pypdf ".[openai,anthropic,advanced,tables,easyocr]"
+RUN pip install --no-cache-dir PyMuPDF pdfplumber fastapi uvicorn pydantic python-multipart tiktoken pypdf ".[openai,anthropic,advanced]"
 
 EXPOSE 8000
 

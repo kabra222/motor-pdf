@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sqlite3
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from app.models import DocumentJob, ExtractionResult, JobStatus
 
@@ -66,7 +66,7 @@ async def create_job() -> str:
     return job_id
 
 
-async def get_job(job_id: str) -> Optional[DocumentJob]:
+async def get_job(job_id: str) -> DocumentJob | None:
     def _get():
         conn = _get_conn()
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
@@ -79,10 +79,8 @@ async def get_job(job_id: str) -> Optional[DocumentJob]:
 
     result = None
     if row["result"]:
-        try:
+        with contextlib.suppress(Exception):
             result = ExtractionResult(**json.loads(row["result"]))
-        except Exception:
-            pass
 
     return DocumentJob(
         id=row["id"],
@@ -136,7 +134,7 @@ async def cleanup_stale_jobs(max_age_seconds: int = 300) -> int:
 # ── Cache ──────────────────────────────────────────────────────────
 
 
-async def cache_get(key: str) -> Optional[dict]:
+async def cache_get(key: str) -> dict | None:
     def _get():
         conn = _get_conn()
         row = conn.execute(

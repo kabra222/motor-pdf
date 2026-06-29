@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -11,10 +12,30 @@ from app.agent.routes import agent_router
 from app.engine.storage import init_db
 from app.routes import router
 
+VERSION = "0.5.0"
+
+try:
+    import sentry_sdk
+    sentry_sdk.init(
+        dsn=os.getenv("SENTRY_DSN"),
+        traces_sample_rate=0.1,
+        environment=os.getenv("RAILWAY_ENVIRONMENT", "production"),
+    )
+except Exception:
+    pass
+
 app = FastAPI(
     title="Motor PDF",
-    description="Motor de extração de texto de PDFs para LLMs com Agente IA",
-    version="0.4.0",
+    description=(
+        "Motor de extração de texto de PDFs para consumo por LLMs. "
+        "Extrai texto, tabelas, imagens e metadados de PDFs com suporte "
+        "a OCR, classificação semântica de blocos, análise de layout, "
+        "e agente IA com RAG via OpenRouter."
+    ),
+    version=VERSION,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    contact={"name": "Motor PDF", "url": "https://github.com/kabra222/motor-pdf"},
 )
 
 app.add_middleware(
@@ -39,7 +60,8 @@ async def value_error_handler(request: Request, exc: ValueError):
 @app.exception_handler(Exception)
 async def generic_error_handler(request: Request, exc: Exception):
     return JSONResponse(
-        status_code=500, content={"error": "Erro interno", "detail": str(exc)}
+        status_code=500,
+        content={"error": "Erro interno", "detail": str(exc)},
     )
 
 
