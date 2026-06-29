@@ -52,6 +52,7 @@ async def start_processing(
     model: str,
     extract_images: bool,
     use_bcpd: bool = False,
+    describe_images: bool = False,
 ) -> None:
     loop = asyncio.get_running_loop()
 
@@ -86,6 +87,15 @@ async def start_processing(
             progress=progress,
         )
         result["metadata"]["title"] = Path(filename).stem
+
+        if describe_images and result.get("images"):
+            import os
+            if os.getenv("OPENROUTER_API_KEY"):
+                try:
+                    from app.engine.vision import describe_images_batch
+                    result["images"] = describe_images_batch(result["images"])
+                except Exception:
+                    pass
     except Exception as e:
         import traceback
         tb = traceback.format_exc()

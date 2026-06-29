@@ -84,6 +84,7 @@ async def extract(
     model: str = Form("gpt-4"),
     extract_images: bool = Form(False),
     use_bcpd: bool = Form(False),
+    describe_images: bool = Form(False),
     x_api_key: str = Depends(verify_api_key),
 ):
     _check_rate(x_api_key or "anonymous")
@@ -137,6 +138,13 @@ async def extract(
         model=model,
         use_bcpd=use_bcpd,
     )
+
+    if describe_images and result.get("images") and os.getenv("OPENROUTER_API_KEY"):
+        try:
+            from app.engine.vision import describe_images_batch
+            result["images"] = describe_images_batch(result["images"])
+        except Exception:
+            pass
 
     extraction = ExtractionResult(
         filename=filename,
@@ -193,6 +201,7 @@ async def create_document(
     model: str = Form("gpt-4"),
     extract_images: bool = Form(False),
     use_bcpd: bool = Form(False),
+    describe_images: bool = Form(False),
     x_api_key: str = Depends(verify_api_key),
 ):
     _check_rate(x_api_key or "anonymous")
@@ -220,6 +229,7 @@ async def create_document(
             model,
             extract_images,
             use_bcpd,
+            describe_images=describe_images,
         )
     )
 
