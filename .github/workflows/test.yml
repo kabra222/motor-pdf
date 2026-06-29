@@ -30,6 +30,17 @@ jobs:
         run: |
           uv sync --all-extras --dev
 
+      - name: Validate JavaScript syntax
+        run: |
+          node -e "
+          const fs = require('fs');
+          const html = fs.readFileSync('app/static/index.html', 'utf8');
+          const m = html.match(/<script>([\s\S]*?)<\/script>/);
+          if (!m) { console.error('Nenhum <script> encontrado'); process.exit(1); }
+          try { new Function(m[1]); console.log('  ✅ JavaScript OK'); }
+          catch(e) { console.error('  ❌ JavaScript syntax error:', e.message); process.exit(1); }
+          "
+
       - name: Lint with Ruff
         run: |
           uv run ruff check app/ tests/

@@ -1,0 +1,51 @@
+repos:
+  - repo: local
+    hooks:
+      - id: validate-js
+        name: Validate JavaScript syntax
+        description: Ensures inline JS in index.html has no syntax errors
+        entry: >
+          bash -c '
+          node -e "
+          const fs = require('"'"'fs'"'"');
+          const html = fs.readFileSync('"'"'app/static/index.html'"'"', '"'"'utf8'"'"');
+          const m = html.match(/<script>([\s\S]*?)<\/script>/);
+          if (m) { new Function(m[1]); }
+          " && echo "  ✅ JavaScript OK" || { echo "  ❌ JavaScript syntax error"; exit 1; }
+          '
+        files: ^app/static/index\.html$
+        language: system
+        pass_filenames: false
+
+      - id: validate-models
+        name: Validate Pydantic models
+        description: Ensures all Pydantic models compile without errors
+        entry: >
+          bash -c '
+          uv run python -c "
+          from app.models import (
+              ExtractionResult, DocumentJob, JobResult, ErrorResponse,
+              Chunk, TextBlock, ImageBlock, TableBlock, HeadingInfo,
+              QualityDimension, FormatType, JobStatus, ExtractRequest,
+          )
+          print('"'"'  ✅ Pydantic models OK'"'"')
+          " && exit 0 || { echo "  ❌ Pydantic models failed"; exit 1; }
+          '
+        files: ^app/models\.py$
+        language: system
+        pass_filenames: false
+
+      - id: validate-routes
+        name: Validate route imports
+        description: Ensures all route modules import correctly
+        entry: >
+          bash -c '
+          uv run python -c "
+          from app.routes import router
+          from app.agent.routes import agent_router
+          print('"'"'  ✅ Route imports OK'"'"')
+          " && exit 0 || { echo "  ❌ Route imports failed"; exit 1; }
+          '
+        files: ^app/(routes\.py|agent/routes\.py|engine/.*\.py)$
+        language: system
+        pass_filenames: false
