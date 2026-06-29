@@ -40,10 +40,27 @@ Motor de backend para extração de texto de PDFs para consumo por LLMs.
 ```
 PDF → [PyMuPDF] → Blocks → [Layout Analysis] → [Classifier Builtin]
     → [Header/Footer Strip] → [Hyphen Repair] → [Orphan Merge]
-    → [Camelot/PDFPlumber Tables] → [Images (opcional)]
+    → [Camelot/PDFPlumber Tables] → [Images (opcional)] → [LLM Vision desc]
     → [Quality Scoring] → [BCPD Segmenter] → [Semantic Chunker]
-    → [VectorStore] → [LLM Agent (OpenRouter)]
+    → [PersistentVectorStore (SQLite)]
+    → [Query Expansion] → [Search + Rerank] → [Context w/ metadata]
+    → [Tool Calling Loop] → [LLM Agent (OpenRouter)]
+    → [Session Memory (SQLite)]
 ```
+
+---
+
+## Melhorias no Agente (implementadas Jun/2026)
+
+| Melhoria | Status | Detalhes |
+|---|---|---|
+| VectorStore Persistente | ✅ | SQLite, namespace-isolated, sobrevive a deploys |
+| Tool Calling Real | ✅ | Prompt-based tool selection (funciona com qualquer LLM) |
+| Reranking (Cross-Encoder) | ✅ | `cross-encoder/ms-marco-MiniLM-L6-v2` se disponível |
+| Metadados na Resposta | ✅ | `[p.X, §heading]` no contexto fornecido ao LLM |
+| Sessões com Memória | ✅ | SQLite, `/agent/sessions` CRUD, histórico persistente |
+| Query Expansion | ✅ | LLM gera 3 variações da pergunta, busca fundida |
+| Embeddings Locais | ✅ | Fallback `all-MiniLM-L6-v2` quando API de embedding falha |
 
 ---
 
@@ -52,7 +69,7 @@ PDF → [PyMuPDF] → Blocks → [Layout Analysis] → [Classifier Builtin]
 1. Pipeline CI/CD com GitHub Actions (testes automáticos no push)
 2. Melhorar detecção de multi-coluna com PDFs reais (ex: artigos científicos)
 3. Suporte a formatação richer (listas aninhadas, notas de rodapé)
-4. Integração contínua com Railway (auto-deploy via Dockerfile)
+4. Auto-cleanup de sessões antigas no SQLite
 
 ---
 
