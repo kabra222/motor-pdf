@@ -54,10 +54,13 @@ class OpenAIProvider(LLMProvider):
         return resp.choices[0].message.content or ""
 
     async def embed(self, text: str) -> list[float]:
-        resp = await self.client.embeddings.create(
-            model=self.embed_model, input=text
-        )
-        return resp.data[0].embedding
+        try:
+            resp = await self.client.embeddings.create(
+                model=self.embed_model, input=text
+            )
+            return resp.data[0].embedding
+        except Exception:
+            return _embed_local(text)
 
 
 class AnthropicProvider(LLMProvider):
@@ -189,7 +192,22 @@ class OpenRouterProvider(OpenAIProvider):
             )
             return resp.data[0].embedding
         except Exception:
-            return [0.0] * 256
+            return _embed_local(text)
+
+
+_LOCAL_EMBED_MODEL = None
+
+
+def _embed_local(text: str) -> list[float]:
+    global _LOCAL_EMBED_MODEL
+    try:
+        if _LOCAL_EMBED_MODEL is None:
+            from sentence_transformers import SentenceTransformer
+            _LOCAL_EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        emb = _LOCAL_EMBED_MODEL.encode(text, show_progress_bar=False)
+        return emb.tolist()
+    except Exception:
+        return [0.0] * 384
 
 
 def create_provider(

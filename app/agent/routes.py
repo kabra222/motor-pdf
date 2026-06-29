@@ -11,7 +11,14 @@ from fastapi.responses import StreamingResponse
 
 from app.agent.agent import PDFAgent
 from app.agent.llm import create_provider
-from app.agent.store import VectorStore
+from app.agent.store import (
+    PersistentVectorStore,
+    add_message,
+    create_session,
+    get_history,
+    get_session,
+    list_sessions,
+)
 from app.engine.chunker import chunk_text
 from app.engine.extractor import extract_text
 
@@ -28,7 +35,7 @@ async def get_agent() -> PDFAgent:
         async with _agent_lock:
             if _agent is None:
                 llm = create_provider(DEFAULT_PROVIDER)
-                store = VectorStore()
+                store = PersistentVectorStore()
                 _agent = PDFAgent(llm=llm, store=store)
     return _agent
 
@@ -99,11 +106,25 @@ async def agent_chat(
     message: str = Form(...),
     stream: bool = Form(False),
     history_json: str = Form("[]"),
+    session_id: str = Form(""),
+    use_tools: bool = Form(True),
 ):
     agent = await get_agent()
     history = json.loads(history_json) if history_json else []
 
-    response = await agent.chat(message, history=history, stream=stream)
+    sid: str | None = session_id or None
+    if sid:
+        existing = get_session(sid)
+        if not existing:
+            raise HTTPException(404, "Sessão não encontrada")
+
+    response = await agent.chat(
+        message,
+        history=history,
+        stream=stream,
+        session_id=sid or None,
+        use_tools=use_tools,
+    )
 
     if stream:
         async def event_stream():
@@ -111,6 +132,9 @@ async def agent_chat(
             async for token in response:
                 full += token
                 yield f"data: {json.dumps({'token': token, 'full': full})}\n\n"
+            if sid:
+                add_message(sid, "user", message)
+                add_message(sid, "assistant", full)
             yield f"data: {json.dumps({'token': '', 'full': full, 'done': True})}\n\n"
 
         return StreamingResponse(
@@ -119,7 +143,32 @@ async def agent_chat(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    if sid:
+        add_message(sid, "user", message)
+        add_message(sid, "assistant", str(response))
+
     return {"response": response}
+
+
+@agent_router.post("/agent/sessions")
+async def agent_create_session():
+    session_id = create_session()
+    return {"session_id": session_id, "status": "created"}
+
+
+@agent_router.get("/agent/sessions")
+async def agent_list_sessions(limit: int = 10):
+    sessions = list_sessions(limit=limit)
+    return {"sessions": sessions}
+
+
+@agent_router.get("/agent/sessions/{session_id}")
+async def agent_get_session(session_id: str):
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(404, "Sessão não encontrada")
+    history = get_history(session_id, limit=50)
+    return {"session": session, "history": history}
 
 
 @agent_router.post("/agent/summarize")
@@ -132,8 +181,11 @@ async def agent_summarize(
         raise HTTPException(400, "Nenhum documento carregado. Use /agent/load primeiro.")
 
     store_text = "\n".join(
-        e.text for e in agent.store._entries
-    )
+        r["text"] for r in agent.store.search(
+            [0.0] * 384 if not hasattr(agent.llm, 'embed') else [],
+            top_k=100, threshold=-1
+        )
+    ) if agent.store.size > 0 else ""
     summary = await agent.summarize(store_text, max_length=max_length, style=style)
     return {"summary": summary}
 
@@ -145,7 +197,9 @@ async def agent_classify():
         raise HTTPException(400, "Nenhum documento carregado.")
 
     store_text = "\n".join(
-        e.text for e in agent.store._entries
+        r["text"] for r in agent.store.search(
+            [0.0] * 384, top_k=100, threshold=-1
+        )
     )[:4000]
     result = await agent.classify(store_text)
     return result
@@ -158,7 +212,9 @@ async def agent_extract(schema_json: str = Form("{}")):
         raise HTTPException(400, "Nenhum documento carregado.")
 
     store_text = "\n".join(
-        e.text for e in agent.store._entries
+        r["text"] for r in agent.store.search(
+            [0.0] * 384, top_k=100, threshold=-1
+        )
     )[:4000]
     schema = json.loads(schema_json) if schema_json else None
     result = await agent.extract(store_text, schema=schema)
