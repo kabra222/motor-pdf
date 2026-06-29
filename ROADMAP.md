@@ -29,6 +29,12 @@ Motor de backend para extração de texto de PDFs para consumo por LLMs.
 | Rate limiter + API Key | ✅ Produção | 60 req/min | OK | Opcional |
 | Web UI | ✅ Produção | Vanilla HTML+JS | OK | Aba Leitura + Quality bar |
 | Descrição de imagens (LLM Vision) | ✅ Produção | OpenRouter vision | OK | Qwen VL 72B free, 20 img max |
+| CI/CD Pipeline (GitHub Actions) | ✅ Configurado | Testes automáticos no push | OK | 16 testes, 5s |
+| Sessões com memória | ✅ Produção | SQLite + `/agent/sessions` | OK | Persistente entre deploys |
+| Tool calling | ✅ Produção | Prompt-based | OK | search/summarize/classify |
+| Query expansion | ✅ Produção | 3 variações por pergunta | OK | Fusão + rerank |
+| Embeddings locais | ✅ Produção | sentence-transformers fallback | OK | all-MiniLM-L6-v2 |
+| Auto-cleanup sessões | ✅ Produção | `POST /agent/sessions/cleanup` | OK | Remove sessões com mais de 7 dias |
 | Docker + Railway | ✅ Produção | Deploy automático | OK | `railway up` ou push GitHub |
 | OCR PaddleOCR | 🟡 Instável | PaddleOCR + EasyOCR fallback | PaddleOCR pesado demais | Railway OOM |
 | Unstructured classifier | ❌ Bloqueado | torch/transformers 1GB+ | Substituído por builtin | Pesado demais |
@@ -66,10 +72,8 @@ PDF → [PyMuPDF] → Blocks → [Layout Analysis] → [Classifier Builtin]
 
 ## Próximos Passos Prioritários
 
-1. Pipeline CI/CD com GitHub Actions (testes automáticos no push)
-2. Melhorar detecção de multi-coluna com PDFs reais (ex: artigos científicos)
-3. Suporte a formatação richer (listas aninhadas, notas de rodapé)
-4. Auto-cleanup de sessões antigas no SQLite
+1. Melhorar detecção de multi-coluna com PDFs reais (ex: artigos científicos)
+2. Suporte a formatação richer (listas aninhadas, notas de rodapé)
 
 ---
 
