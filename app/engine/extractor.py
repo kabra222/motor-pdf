@@ -190,16 +190,23 @@ def extract_text(
                 all_blocks = strip_headers_footers_from_blocks(all_blocks, num_pages)
 
         # rebuild headings from enriched blocks (classification may update levels)
-        all_headings = [
-            {
+        _heading_boilerplate = {"fullscreen", "copy link", "continue reading", "link"}
+        all_headings = []
+        for b in all_blocks:
+            if b.get("type") != "text" or not b.get("is_heading"):
+                continue
+            ht = b.get("text", "").strip()
+            ht = ht.split("\n")[0].strip()
+            if ht.lower() in _heading_boilerplate:
+                continue
+            if len(ht) < 2:
+                continue
+            all_headings.append({
                 "level": b.get("heading_level", 4),
-                "text": b.get("text", ""),
+                "text": ht,
                 "page": b.get("page", 0),
                 "bbox": b.get("bbox", (0, 0, 0, 0)),
-            }
-            for b in all_blocks
-            if b.get("type") == "text" and b.get("is_heading")
-        ]
+            })
     
         # rebuild pages_text from cleaned blocks to keep sync
         try:

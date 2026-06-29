@@ -246,9 +246,10 @@ async def deep_analyze(
 
     toc = []
     for h in headings:
+        ht = h.get("text", "").strip().split("\n")[0][:80]
         toc.append({
             "level": h.get("level", 0),
-            "text": h.get("text", "").strip()[:100],
+            "text": ht,
             "page": h.get("page", 0),
         })
 
@@ -257,11 +258,13 @@ async def deep_analyze(
     for b in blocks:
         if b.get("type") != "text":
             continue
-        if b.get("is_heading") or b.get("layout_type") == "heading":
+        is_heading = b.get("is_heading") or b.get("layout_type") == "heading"
+        if is_heading:
             if current_section and current_section.get("content"):
                 sections.append(current_section)
+            ht = b.get("text", "").strip().split("\n")[0][:100]
             current_section = {
-                "heading": b.get("text", "").strip()[:120],
+                "heading": ht,
                 "level": b.get("heading_level", 4),
                 "page": b.get("page", 0),
                 "content": "",
@@ -288,73 +291,63 @@ async def deep_analyze(
             classified[lt] = classified.get(lt, 0) + 1
 
     text_blocks = [b for b in blocks if b.get("type") == "text"]
-    if text_blocks:
-        pages_with_content = set(b.get("page", 0) for b in text_blocks)
-        avg_font = sum(b.get("font_size", 0) for b in text_blocks) / len(text_blocks)
-        bold_blocks = sum(1 for b in text_blocks if "Bold" in b.get("font", ""))
-    else:
-        pages_with_content = set()
-        avg_font = 0
-        bold_blocks = 0
 
     section_analysis_parts = []
-    for sec in sections[:15]:
+    char_budget = 8000
+    for sec in sections[:20]:
         content = sec["content"].strip()
-        if len(content) < 50:
+        if len(content) < 30:
             continue
-        section_analysis_parts.append(
-            f"### {sec['heading']} (p.{sec['page']}, {sec['blocks']} blocos)\n"
-            f"{content[:800]}\n"
-        )
+        chunk = f"### {sec['heading']} (p.{sec['page']})\n{content[:600]}\n"
+        if len("\n".join(section_analysis_parts)) + len(chunk) > char_budget:
+            break
+        section_analysis_parts.append(chunk)
 
-    section_context = "\n".join(section_analysis_parts)[:12000]
+    section_context = "\n".join(section_analysis_parts)
 
-    analysis_prompt = (
-        "Você é um analista de documentos profissional. Analise o documento abaixo "
-        "e forneça uma análise COMPLETA e DETALHADA em português.\n\n"
-        "## Estrutura do Documento\n"
-        f"- Páginas: {num_pages}\n"
-        f"- Blocos de texto: {len(text_blocks)}\n"
-        f"- Seções/títulos: {len(headings)}\n"
-        f"- Tabelas: {len(tables)}\n"
-        f"- Qualidade geral: {quality.get('overall', '?')}\n"
-        f"- Classificação: {json.dumps(classified, ensure_ascii=False)}\n\n"
-        "## Sumário (Table of Contents)\n"
-    )
+    toc_text = ""
     for t in toc:
         indent = "  " * (t["level"] - 1) if t["level"] > 0 else ""
-        analysis_prompt += f"{indent}- {t['text']} (p.{t['page']})\n"
+        toc_text += f"{indent}- {t['text']} (p.{t['page']})\n"
 
-    analysis_prompt += (
-        "\n## Conteúdo por Seção\n"
+    analysis_prompt = (
+        "Analise o documento abaixo e forneça uma análise COMPLETA em português.\n\n"
+        f"Documento: {num_pages} páginas, {len(text_blocks)} blocos, "
+        f"{len(headings)} seções, {len(tables)} tabelas\n"
+        f"Qualidade: {quality.get('overall', '?')}\n\n"
+        "## Sumário\n"
+        f"{toc_text}\n"
+        "## Conteúdo por Seção\n"
         f"{section_context}\n\n"
-        "---\n\n"
-        "Forneça a análise nos seguintes formatos:\n\n"
+        "---\n"
+        "Forneça:\n"
         "### 1. RESUMO EXECUTIVO (3-5 parágrafos)\n"
-        "Síntese completa do documento, incluindo propósito, escopo, metodologia "
-        "(se aplicável), achados principais e conclusões.\n\n"
-        "### 2. PONTOS-CHAVE\n"
-        "- Lista os 8-15 pontos mais importantes do documento\n"
-        "- Cada ponto deve ser substantivo, não trivial\n\n"
+        "Propósito, escopo, achados principais e conclusões.\n\n"
+        "### 2. PONTOS-CHAVE (8-15 itens substantivos)\n\n"
         "### 3. ANÁLISE POR SEÇÃO\n"
-        "Para cada seção principal:\n"
-        "- Tese/objetivo da seção\n"
-        "- Argumentos ou dados apresentados\n"
-        "- Conclusão parcial\n\n"
+        "Para cada seção: tese, argumentos, dados, conclusão parcial.\n\n"
         "### 4. ENTIDADES E REFERÊNCIAS\n"
-        "- Pessoas, organizações, locais mencionados\n"
-        "-Datas e valores relevantes\n"
-        "- Referências bibliográficas (se houver)\n\n"
+        "Pessoas, organizações, valores, datas relevantes.\n\n"
         "### 5. QUALIDADE E COMPLETUDE\n"
-        "- Avalie a coerência do documento\n"
-        "- Identifique lacunas ou pontos fracos\n"
-        "- Sugestões de leitura adicional (se aplicável)"
+        "Coerência, lacunas, sugestões."
     )
 
-    analysis = await llm.chat([
-        {"role": "system", "content": "Você é um analista de documentos sênior."},
-        {"role": "user", "content": analysis_prompt},
-    ])
+    try:
+        analysis = await llm.chat([
+            {"role": "system", "content": "Você é um analista de documentos sênior."},
+            {"role": "user", "content": analysis_prompt},
+        ])
+    except Exception as e:
+        analysis = (
+            f"Erro ao gerar análise detalhada: {e}\n\n"
+            f"## Estrutura encontrada\n{toc_text}\n"
+            f"## Estatísticas\n"
+            f"- Páginas: {num_pages}\n"
+            f"- Blocos: {len(text_blocks)}\n"
+            f"- Seções: {len(headings)}\n"
+            f"- Tabelas: {len(tables)}\n"
+            f"- Qualidade: {quality.get('overall', '?')}\n"
+        )
 
     return {
         "analysis": analysis,
@@ -370,13 +363,17 @@ async def deep_analyze(
             "blocks": len(text_blocks),
             "headings": len(headings),
             "tables": len(tables),
-            "avg_font_size": round(avg_font, 1),
-            "bold_blocks": bold_blocks,
         },
     }
 
 
 # ── Extract structure ────────────────────────────────────────────
+
+_BOILERPLATE_HEADINGS = frozenset({
+    "fullscreen", "copy link", "continue reading", "link",
+    "continue from your last visit",
+})
+
 
 async def extract_structure(
     extraction_result: dict,
@@ -392,9 +389,12 @@ async def extract_structure(
 
     toc = []
     for h in headings:
+        ht = h.get("text", "").strip().split("\n")[0][:80]
+        if ht.lower() in _BOILERPLATE_HEADINGS:
+            continue
         toc.append({
             "level": h.get("level", 0),
-            "text": h.get("text", "").strip()[:120],
+            "text": ht,
             "page": h.get("page", 0),
         })
 
@@ -403,11 +403,16 @@ async def extract_structure(
     for b in blocks:
         if b.get("type") != "text":
             continue
-        if b.get("is_heading") or b.get("layout_type") == "heading":
+        is_heading = b.get("is_heading") or b.get("layout_type") == "heading"
+        if is_heading:
             if current_section:
                 sections.append(current_section)
+            ht = b.get("text", "").strip().split("\n")[0][:100]
+            if ht.lower() in _BOILERPLATE_HEADINGS:
+                current_section = None
+                continue
             current_section = {
-                "heading": b.get("text", "").strip()[:120],
+                "heading": ht,
                 "level": b.get("heading_level", 4),
                 "page": b.get("page", 0),
                 "char_count": 0,
