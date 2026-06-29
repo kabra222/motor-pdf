@@ -152,6 +152,8 @@ main { max-width: 960px; margin: 1.5rem auto; padding: 0 1rem; }
 <!-- PANEL: CHAT -->
 <div class="tab-panel" id="panelChat">
 <div class="agent-tools">
+<button id="toolAnalyze" disabled>🔬 Análise Profunda</button>
+<button id="toolStructure" disabled>📐 Estrutura</button>
 <button id="toolSummarize" disabled>📝 Resumir</button>
 <button id="toolClassify" disabled>🏷️ Classificar</button>
 <button id="toolExtract" disabled>🔍 Extrair Entidades</button>
@@ -332,6 +334,8 @@ const chatSend = document.getElementById('chatSend');
 function enableChat(on) {
 chatInput.disabled = !on;
 chatSend.disabled = !on;
+document.getElementById('toolAnalyze').disabled = !on;
+document.getElementById('toolStructure').disabled = !on;
 document.getElementById('toolSummarize').disabled = !on;
 document.getElementById('toolClassify').disabled = !on;
 document.getElementById('toolExtract').disabled = !on;
@@ -396,6 +400,52 @@ chatSend.disabled = false; chatInput.disabled = false; chatInput.focus();
 }
 
 // ── Agent tools ───────────────────────────────────────────────
+document.getElementById('toolAnalyze').addEventListener('click', async () => {
+const btn = document.getElementById('toolAnalyze'); btn.disabled = true;
+addChatMessage('user', '🔬 Faça uma análise profunda deste documento');
+const msgDiv = addChatMessage('assistant', '<span class="typing">Analisando em profundidade...</span>');
+try {
+const r = await fetch('/api/v1/agent/analyze', { method: 'POST' });
+const d = await r.json();
+if (d.error) { msgDiv.querySelector('.msg-bubble').innerHTML = marked('Erro: '+d.error); }
+else {
+const analysis = d.analysis || 'Sem análise';
+msgDiv.querySelector('.msg-bubble').innerHTML = marked(analysis);
+}
+} catch(e) { msgDiv.querySelector('.msg-bubble').textContent = 'Erro: '+e.message; }
+btn.disabled = false;
+});
+
+document.getElementById('toolStructure').addEventListener('click', async () => {
+const btn = document.getElementById('toolStructure'); btn.disabled = true;
+addChatMessage('user', '📐 Extraia a estrutura deste documento');
+const msgDiv = addChatMessage('assistant', '<span class="typing">Extraindo estrutura...</span>');
+try {
+const r = await fetch('/api/v1/agent/structure', { method: 'POST' });
+const d = await r.json();
+if (d.error) { msgDiv.querySelector('.msg-bubble').innerHTML = marked('Erro: '+d.error); }
+else {
+let md = '## Estrutura do Documento\n\n';
+md += '### Sumário\n';
+for (const t of (d.toc || [])) {
+const indent = '  '.repeat(Math.max(0, (t.level||1)-1));
+md += `${indent}- ${t.text} (p.${t.page})\n`;
+}
+md += '\n### Seções\n';
+for (const s of (d.sections || [])) {
+md += `- **${s.heading}** — ${s.block_count} blocos, ${s.char_count} chars (p.${s.page})\n`;
+}
+md += `\n### Classificação\n`;
+for (const [k,v] of Object.entries(d.classification || {})) {
+md += `- ${k}: ${v} blocos\n`;
+}
+md += `\n**Qualidade geral:** ${((d.quality?.overall||0)*100).toFixed(0)}%`;
+msgDiv.querySelector('.msg-bubble').innerHTML = marked(md);
+}
+} catch(e) { msgDiv.querySelector('.msg-bubble').textContent = 'Erro: '+e.message; }
+btn.disabled = false;
+});
+
 document.getElementById('toolSummarize').addEventListener('click', async () => {
 const btn = document.getElementById('toolSummarize'); btn.disabled = true;
 addChatMessage('user', '📝 Resuma este documento');

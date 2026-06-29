@@ -8,7 +8,9 @@ from app.agent.tools import (
     TOOLS,
     build_pdf_context,
     classify,
+    deep_analyze,
     extract_entities,
+    extract_structure,
     search,
     summarize,
 )
@@ -27,6 +29,7 @@ class PDFAgent:
     ):
         self.llm = llm
         self.store = store or PersistentVectorStore()
+        self.extraction_result: dict | None = None
 
     async def chat(
         self,
@@ -47,11 +50,17 @@ class PDFAgent:
                 message, self.llm, self.store, use_expansion=True
             )
             system_prompt = (
-                "Você é um assistente especializado em analisar documentos PDF. "
+                "Você é um analista de documentos PDF de alto nível. "
                 "Use o contexto fornecido para responder perguntas sobre o documento. "
                 "Sempre cite os trechos relevantes que usou para responder, "
                 "incluindo o número da página e seção quando disponível. "
                 "Se não souber a resposta, diga que não encontrou a informação no documento.\n\n"
+                "INSTRUÇÕES DE ANÁLISE:\n"
+                "- Para perguntas gerais sobre o documento: use analyze_document para análise profunda\n"
+                "- Para pedidos de estrutura/organização: use extract_structure\n"
+                "- Para resumos: use summarize_document\n"
+                "- Para informações específicas: use search_document\n"
+                "- Para classificação: use classify_document\n\n"
                 f"Contexto do documento:\n{context}"
             )
         elif pdf_text:
@@ -147,11 +156,13 @@ class PDFAgent:
             text = self._store_text_fallback()
             if not text:
                 return {"error": "Nenhum texto disponível"}
+            structure = self.extraction_result if self.extraction_result else None
             result = await summarize(
                 text,
                 self.llm,
                 max_length=args.get("max_length", 500),
                 style=args.get("style", "paragraph"),
+                structure=structure,
             )
             return {"summary": result}
         elif name == "classify_document":
@@ -159,6 +170,14 @@ class PDFAgent:
             if not text:
                 return {"error": "Nenhum texto disponível"}
             return await classify(text, self.llm)
+        elif name == "analyze_document":
+            if not self.extraction_result:
+                return {"error": "Nenhum documento carregado. Use /agent/load primeiro."}
+            return await deep_analyze(self.extraction_result, self.llm)
+        elif name == "extract_structure":
+            if not self.extraction_result:
+                return {"error": "Nenhum documento carregado. Use /agent/load primeiro."}
+            return await extract_structure(self.extraction_result, self.llm)
         return {"error": f"Ferramenta desconhecida: {name}"}
 
     def _store_text_fallback(self) -> str:

@@ -139,13 +139,34 @@ async def summarize(
     llm: LLMProvider,
     max_length: int = 500,
     style: str = "paragraph",
+    structure: dict | None = None,
 ) -> str:
-    prompt = (
-        f"Resuma o texto abaixo em {'um parágrafo' if style == 'paragraph' else 'tópicos'}. "
-        f"Mantenha os números e dados principais. Máximo de {max_length} caracteres.\n\n{text}"
-    )
+    if structure and structure.get("headings"):
+        toc = "\n".join(
+            f"{'  ' * (h.get('level', 1) - 1)}- {h.get('text', '').strip()[:80]}"
+            for h in structure["headings"][:30]
+        )
+        prompt = (
+            "Você é um analista de documentos. Gere um resumo DETALHADO e "
+            "estruturado do documento abaixo.\n\n"
+            f"## Estrutura do documento:\n{toc}\n\n"
+            f"## Texto completo:\n{text[:12000]}\n\n"
+            "---\n\n"
+            "Gere um resumo que inclua:\n"
+            "1. **Propósito e escopo** do documento\n"
+            "2. **Pontos principais** por seção\n"
+            "3. **Conclusões ou achados** relevantes\n"
+            "4. **Dados e números** importantes\n\n"
+            f"Máximo de {max_length} caracteres. "
+            f"Estilo: {'tópicos' if style == 'bullets' else 'parágrafos'}."
+        )
+    else:
+        prompt = (
+            f"Resuma o texto abaixo em {'um parágrafo' if style == 'paragraph' else 'tópicos'}. "
+            f"Mantenha os números e dados principais. Máximo de {max_length} caracteres.\n\n{text[:8000]}"
+        )
     return await llm.chat([
-        {"role": "system", "content": "Você é um assistente especializado em resumir documentos."},
+        {"role": "system", "content": "Você é um analista de documentos sênior."},
         {"role": "user", "content": prompt},
     ])
 
@@ -209,6 +230,229 @@ async def extract_entities(
     return {"error": "Falha ao extrair entidades", "raw": result}
 
 
+# ── Deep analysis ─────────────────────────────────────────────────
+
+async def deep_analyze(
+    extraction_result: dict,
+    llm: LLMProvider,
+) -> dict:
+    headings = extraction_result.get("headings", [])
+    blocks = extraction_result.get("blocks", [])
+    tables = extraction_result.get("tables", [])
+    quality = extraction_result.get("quality", {})
+    metadata = extraction_result.get("metadata", {})
+    text = extraction_result.get("text", "")
+    num_pages = extraction_result.get("num_pages", 0)
+
+    toc = []
+    for h in headings:
+        toc.append({
+            "level": h.get("level", 0),
+            "text": h.get("text", "").strip()[:100],
+            "page": h.get("page", 0),
+        })
+
+    sections: list[dict] = []
+    current_section: dict | None = None
+    for b in blocks:
+        if b.get("type") != "text":
+            continue
+        if b.get("is_heading") or b.get("layout_type") == "heading":
+            if current_section and current_section.get("content"):
+                sections.append(current_section)
+            current_section = {
+                "heading": b.get("text", "").strip()[:120],
+                "level": b.get("heading_level", 4),
+                "page": b.get("page", 0),
+                "content": "",
+                "blocks": 0,
+            }
+        elif current_section is not None:
+            current_section["content"] += b.get("text", "") + "\n"
+            current_section["blocks"] += 1
+        else:
+            current_section = {
+                "heading": "(Pré-texto)",
+                "level": 0,
+                "page": b.get("page", 0),
+                "content": b.get("text", "") + "\n",
+                "blocks": 1,
+            }
+    if current_section:
+        sections.append(current_section)
+
+    classified = {}
+    for b in blocks:
+        if b.get("type") == "text":
+            lt = b.get("layout_type", "unknown")
+            classified[lt] = classified.get(lt, 0) + 1
+
+    text_blocks = [b for b in blocks if b.get("type") == "text"]
+    if text_blocks:
+        pages_with_content = set(b.get("page", 0) for b in text_blocks)
+        avg_font = sum(b.get("font_size", 0) for b in text_blocks) / len(text_blocks)
+        bold_blocks = sum(1 for b in text_blocks if "Bold" in b.get("font", ""))
+    else:
+        pages_with_content = set()
+        avg_font = 0
+        bold_blocks = 0
+
+    section_analysis_parts = []
+    for sec in sections[:15]:
+        content = sec["content"].strip()
+        if len(content) < 50:
+            continue
+        section_analysis_parts.append(
+            f"### {sec['heading']} (p.{sec['page']}, {sec['blocks']} blocos)\n"
+            f"{content[:800]}\n"
+        )
+
+    section_context = "\n".join(section_analysis_parts)[:12000]
+
+    analysis_prompt = (
+        "Você é um analista de documentos profissional. Analise o documento abaixo "
+        "e forneça uma análise COMPLETA e DETALHADA em português.\n\n"
+        "## Estrutura do Documento\n"
+        f"- Páginas: {num_pages}\n"
+        f"- Blocos de texto: {len(text_blocks)}\n"
+        f"- Seções/títulos: {len(headings)}\n"
+        f"- Tabelas: {len(tables)}\n"
+        f"- Qualidade geral: {quality.get('overall', '?')}\n"
+        f"- Classificação: {json.dumps(classified, ensure_ascii=False)}\n\n"
+        "## Sumário (Table of Contents)\n"
+    )
+    for t in toc:
+        indent = "  " * (t["level"] - 1) if t["level"] > 0 else ""
+        analysis_prompt += f"{indent}- {t['text']} (p.{t['page']})\n"
+
+    analysis_prompt += (
+        "\n## Conteúdo por Seção\n"
+        f"{section_context}\n\n"
+        "---\n\n"
+        "Forneça a análise nos seguintes formatos:\n\n"
+        "### 1. RESUMO EXECUTIVO (3-5 parágrafos)\n"
+        "Síntese completa do documento, incluindo propósito, escopo, metodologia "
+        "(se aplicável), achados principais e conclusões.\n\n"
+        "### 2. PONTOS-CHAVE\n"
+        "- Lista os 8-15 pontos mais importantes do documento\n"
+        "- Cada ponto deve ser substantivo, não trivial\n\n"
+        "### 3. ANÁLISE POR SEÇÃO\n"
+        "Para cada seção principal:\n"
+        "- Tese/objetivo da seção\n"
+        "- Argumentos ou dados apresentados\n"
+        "- Conclusão parcial\n\n"
+        "### 4. ENTIDADES E REFERÊNCIAS\n"
+        "- Pessoas, organizações, locais mencionados\n"
+        "-Datas e valores relevantes\n"
+        "- Referências bibliográficas (se houver)\n\n"
+        "### 5. QUALIDADE E COMPLETUDE\n"
+        "- Avalie a coerência do documento\n"
+        "- Identifique lacunas ou pontos fracos\n"
+        "- Sugestões de leitura adicional (se aplicável)"
+    )
+
+    analysis = await llm.chat([
+        {"role": "system", "content": "Você é um analista de documentos sênior."},
+        {"role": "user", "content": analysis_prompt},
+    ])
+
+    return {
+        "analysis": analysis,
+        "structure": {
+            "toc": toc,
+            "sections_count": len(sections),
+            "classification": classified,
+            "quality": quality,
+            "metadata": metadata,
+        },
+        "stats": {
+            "pages": num_pages,
+            "blocks": len(text_blocks),
+            "headings": len(headings),
+            "tables": len(tables),
+            "avg_font_size": round(avg_font, 1),
+            "bold_blocks": bold_blocks,
+        },
+    }
+
+
+# ── Extract structure ────────────────────────────────────────────
+
+async def extract_structure(
+    extraction_result: dict,
+    llm: LLMProvider | None = None,
+) -> dict:
+    headings = extraction_result.get("headings", [])
+    blocks = extraction_result.get("blocks", [])
+    tables = extraction_result.get("tables", [])
+    metadata = extraction_result.get("metadata", {})
+    quality = extraction_result.get("quality", {})
+    annotations = extraction_result.get("annotations", [])
+    links = extraction_result.get("links", [])
+
+    toc = []
+    for h in headings:
+        toc.append({
+            "level": h.get("level", 0),
+            "text": h.get("text", "").strip()[:120],
+            "page": h.get("page", 0),
+        })
+
+    sections = []
+    current_section = None
+    for b in blocks:
+        if b.get("type") != "text":
+            continue
+        if b.get("is_heading") or b.get("layout_type") == "heading":
+            if current_section:
+                sections.append(current_section)
+            current_section = {
+                "heading": b.get("text", "").strip()[:120],
+                "level": b.get("heading_level", 4),
+                "page": b.get("page", 0),
+                "char_count": 0,
+                "block_count": 0,
+            }
+        elif current_section:
+            current_section["char_count"] += len(b.get("text", ""))
+            current_section["block_count"] += 1
+    if current_section:
+        sections.append(current_section)
+
+    classified = {}
+    for b in blocks:
+        if b.get("type") == "text":
+            lt = b.get("layout_type", "unknown")
+            classified[lt] = classified.get(lt, 0) + 1
+
+    fonts = {}
+    for b in blocks:
+        if b.get("type") == "text" and b.get("font"):
+            f = b["font"]
+            fonts[f] = fonts.get(f, 0) + 1
+
+    table_summaries = []
+    for i, t in enumerate(tables[:20]):
+        lines = t.strip().split("\n")
+        table_summaries.append({
+            "index": i,
+            "rows": len(lines),
+            "preview": t[:200],
+        })
+
+    return {
+        "toc": toc,
+        "sections": sections,
+        "classification": classified,
+        "fonts": dict(sorted(fonts.items(), key=lambda x: -x[1])[:10]),
+        "tables": table_summaries,
+        "quality": quality,
+        "metadata": metadata,
+        "annotations_count": len(annotations),
+        "links_count": len(links),
+    }
+
+
 # ── Tool definitions (OpenAI format) ──────────────────────────────
 
 TOOLS = [
@@ -265,6 +509,42 @@ TOOLS = [
             "description": (
                 "Classifica o tipo do documento carregado "
                 "(relatorio_financeiro, contrato, artigo_cientifico, etc.)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_document",
+            "description": (
+                "Análise PROFUNDA e estruturada do documento. Use quando o usuário "
+                "pedir análise detalhada, avaliação crítica, pontos-chave, análise "
+                "por seção, ou qualquer análise que vá além de um simples resumo. "
+                "Esta ferramenta retorna: resumo executivo, pontos-chave, análise "
+                "por seção, entidades/referências, e avaliação de qualidade."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "extract_structure",
+            "description": (
+                "Extrai a estrutura completa do documento: sumário (TOC), "
+                "seções com estatísticas, classificação de blocos, fontes "
+                "utilizadas, tabelas, qualidade e metadados. Use quando o "
+                "usuário pedir a estrutura, organização, sumário, ou "
+                "visão geral do documento."
             ),
             "parameters": {
                 "type": "object",

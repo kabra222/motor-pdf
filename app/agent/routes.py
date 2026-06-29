@@ -20,6 +20,7 @@ from app.agent.store import (
     get_session,
     list_sessions,
 )
+from app.agent.tools import deep_analyze, extract_structure
 from app.engine.chunker import chunk_text
 from app.engine.extractor import extract_text
 
@@ -81,6 +82,7 @@ async def agent_load(
 
     agent = await get_agent()
     agent.store.clear()
+    agent.extraction_result = result
 
     embed_tasks = []
     for c in chunks:
@@ -237,3 +239,21 @@ async def agent_status():
         "indexed_chunks": agent.store.size,
         "model": getattr(agent.llm, "model", "unknown"),
     }
+
+
+@agent_router.post("/agent/analyze")
+async def agent_analyze():
+    agent = await get_agent()
+    if not agent.extraction_result:
+        raise HTTPException(400, "Nenhum documento carregado. Use /agent/load primeiro.")
+    result = await deep_analyze(agent.extraction_result, agent.llm)
+    return result
+
+
+@agent_router.post("/agent/structure")
+async def agent_structure():
+    agent = await get_agent()
+    if not agent.extraction_result:
+        raise HTTPException(400, "Nenhum documento carregado. Use /agent/load primeiro.")
+    result = await extract_structure(agent.extraction_result, agent.llm)
+    return result
