@@ -89,7 +89,8 @@ async def start_processing(
             extract_images=extract_images,
             progress=progress,
         )
-        result["metadata"]["title"] = Path(filename).stem
+        if not result["metadata"].get("title"):
+            result["metadata"]["title"] = Path(filename).stem
 
         if describe_images and result.get("images"):
             import os

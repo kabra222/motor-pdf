@@ -110,11 +110,36 @@ async def extract(
         "model": model,
         "extract_images": extract_images,
         "use_bcpd": use_bcpd,
+        "format": format.value if isinstance(format, FormatType) else str(format),
     }
     cache_key = cache.make_key(data, cache_params)
     cached = await cache.get(cache_key)
     if cached:
-        return ExtractionResult(**cached)
+        extraction = ExtractionResult(**cached)
+        if format != FormatType.text:
+            formatted = format_result(
+                extraction.text,
+                extraction.blocks,
+                extraction.headings,
+                extraction.tables,
+                format,
+            )
+            return ExtractionResult(
+                filename=extraction.filename,
+                text=formatted,
+                chunks=extraction.chunks,
+                blocks=extraction.blocks,
+                headings=extraction.headings,
+                tables=extraction.tables,
+                images=extraction.images,
+                metadata=extraction.metadata,
+                num_pages=extraction.num_pages,
+                num_chunks=extraction.num_chunks,
+                scanned_pages=extraction.scanned_pages,
+                quality=extraction.quality,
+                classified_count=extraction.classified_count,
+            )
+        return extraction
 
     suffix = Path(filename).suffix
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -136,7 +161,8 @@ async def extract(
     if result["num_pages"] > MAX_PAGES:
         return ErrorResponse(error="PDF excede limite de páginas")
 
-    result["metadata"]["title"] = Path(filename).stem
+    if not result["metadata"].get("title"):
+        result["metadata"]["title"] = Path(filename).stem
 
     chunks = chunk_text(
         result["text"],

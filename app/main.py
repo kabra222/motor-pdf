@@ -12,7 +12,7 @@ from app.agent.routes import agent_router
 from app.engine.storage import init_db
 from app.routes import router
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 try:
     import sentry_sdk
