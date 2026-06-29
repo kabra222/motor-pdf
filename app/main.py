@@ -59,9 +59,13 @@ async def value_error_handler(request: Request, exc: ValueError):
 
 @app.exception_handler(Exception)
 async def generic_error_handler(request: Request, exc: Exception):
+    import traceback
+    detail = str(exc)
+    if not detail or detail == "Erro interno":
+        detail = traceback.format_exc()[-500:]
     return JSONResponse(
         status_code=500,
-        content={"error": "Erro interno", "detail": str(exc)},
+        content={"error": "Erro interno", "detail": detail},
     )
 
 

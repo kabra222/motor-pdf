@@ -68,27 +68,35 @@ async def agent_load(
         if not result["metadata"].get("title"):
             result["metadata"]["title"] = Path(file.filename).stem
         text = result["text"]
+    except Exception as e:
+        raise HTTPException(500, f"Erro na extração: {e}") from e
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    chunks = chunk_text(
-        text,
-        pages_text=result.get("pages_text"),
-        blocks=result.get("blocks"),
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        use_bcpd=use_bcpd,
-    )
+    try:
+        chunks = chunk_text(
+            text,
+            pages_text=result.get("pages_text"),
+            blocks=result.get("blocks"),
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            use_bcpd=use_bcpd,
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Erro no chunking: {e}") from e
 
     agent = await get_agent()
     agent.store.clear()
     agent.extraction_result = result
 
-    embed_tasks = []
-    for c in chunks:
-        embed_tasks.append(agent.llm.embed(c.text))
+    try:
+        embed_tasks = []
+        for c in chunks:
+            embed_tasks.append(agent.llm.embed(c.text))
 
-    embeddings = await asyncio.gather(*embed_tasks)
+        embeddings = await asyncio.gather(*embed_tasks)
+    except Exception as e:
+        raise HTTPException(500, f"Erro na geração de embeddings: {e}") from e
 
     metadata = [
         {"page": c.page, "section": c.section, "heading": c.heading, "chunk_index": c.index}

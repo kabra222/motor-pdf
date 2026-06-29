@@ -160,6 +160,8 @@ async def extract(
             password=password,
             extract_images=extract_images,
         )
+    except Exception as e:
+        raise HTTPException(500, f"Erro na extração: {e}") from e
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 

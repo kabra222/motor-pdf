@@ -241,7 +241,7 @@ setStatus('loading', 'Extraindo...');
 try {
 const r = await fetch('/api/v1/extract', { method: 'POST', body: form });
 const d = await r.json();
-if (d.error) { setStatus('error', d.error); extractBtn.disabled = false; return; }
+if (d.error) { setStatus('error', d.error + (d.detail ? ': ' + d.detail : '')); extractBtn.disabled = false; return; }
 lastExtractData = d;
 setStatus('done', `${d.num_pages} páginas, ${d.num_chunks} chunks`);
 showResults(d);
